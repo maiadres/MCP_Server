@@ -21,7 +21,7 @@ def buscar_peliculas(palabra_clave: str) -> str:
         "user": "postgres",
         "password": "1234", # Reemplazá por tu clave de pgAdmin
         "host": "localhost",
-        "port": "5434",
+        "port": "contra",
         "client_encoding": "UTF8"
     }
     
