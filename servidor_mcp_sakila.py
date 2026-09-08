@@ -1,113 +1,74 @@
-from fastmcp import FastMCP
-import psycopg2
+"""Servidor MCP de solo lectura para la base de datos local Sakila."""
+
+import os
 import json
+import psycopg2
+import psycopg2.pool
+from fastmcp import FastMCP
+from dotenv import load_dotenv
 
-mcp = FastMCP("Servidor_Sakila")
+load_dotenv()
 
-@mcp.tool()
-def buscar_peliculas(palabra_clave: str) -> str:
-    """
-    Busca películas en la base de datos Sakila por coincidencia en el título o descripción.
-    
-    IMPORTANTE: La base de datos Sakila almacena su información en INGLÉS. 
-    Si el usuario realiza una solicitud en español (ej. "películas de acción" o "perros"), 
-    DEBES traducir el concepto al inglés (ej. "action" o "dog") ANTES de pasarlo 
-    como argumento a esta herramienta.
-    
-    palabra_clave: Término de búsqueda (obligatoriamente en inglés).
-    """
-    conexion_db = {
-        "dbname": "sakila",
-        "user": "postgres",
-        "password": "1234", # Reemplazá por tu clave de pgAdmin
-        "host": "localhost",
-        "port": "contra",
-        "client_encoding": "UTF8"
-    }
-    
-    try:
-        conn = psycopg2.connect(**conexion_db)
-        cursor = conn.cursor()
-        
-        query = """
-            SELECT title, release_year, rating, description 
-            FROM film 
-            WHERE title ILIKE %s OR description ILIKE %s
-            LIMIT 10;
-        """
-        parametro = f"%{palabra_clave}%"
-        cursor.execute(query, (parametro, parametro))
-        
-        nombres_columnas = [desc[0] for desc in cursor.description]
-        filas = cursor.fetchall()
-        
-        cursor.close()
-        conn.close()
-        
-        if not filas:
-            return f"No se encontraron películas para la búsqueda: {palabra_clave}"
-            
-        resultados = [dict(zip(nombres_columnas, fila)) for fila in filas]
-        return json.dumps(resultados, indent=2, default=str)
-        
-    except Exception as e:
-        return f"Error en PostgreSQL: {str(e)}"
+mcp = FastMCP("Sakila MCP Server")
+
+# Pool global reutilizable para las consultas recibidas por el servidor MCP.
+connection_pool = psycopg2.pool.SimpleConnectionPool(
+    minconn=1,
+    maxconn=10,
+    dbname="sakila",
+    user="postgres",
+    password=os.getenv("DB_PASSWORD", "TU_CONTRASEÑA"),
+    host="localhost",
+    port="5434",
+    client_encoding="UTF-8",
+)
+
 
 @mcp.tool()
-def obtener_esquema_sakila() -> str:
+def leer_esquema_vistas() -> str:
+    """La IA debe llamar esta herramienta antes de escribir SQL para Sakila.
+
+    Devuelve el mapa de las únicas vistas permitidas para realizar consultas.
     """
-    Devuelve el esquema de las tablas principales de la base de datos Sakila.
-    ÚSALO SIEMPRE ANTES de escribir consultas SQL para conocer la estructura y relaciones.
-    """
-    return """
-    Tablas principales:
-    - film (film_id, title, description, release_year, rating)
-    - inventory (inventory_id, film_id, store_id)
-    - rental (rental_id, rental_date, inventory_id, customer_id, return_date)
-    - customer (customer_id, first_name, last_name, active)
-    
-    Relaciones clave:
-    - 'inventory' se une con 'film' mediante film_id.
-    - 'rental' se une con 'inventory' mediante inventory_id.
-    - 'rental' se une con 'customer' mediante customer_id.
-    """
+    return (
+        "Antes de escribir SQL, usa EXCLUSIVAMENTE estas dos vistas pre-calculadas: "
+        "vista_alquileres (customer_id, customer_name, email, rental_date, "
+        "return_date, film_title, category_name) y vista_catalogo (film_id, title, "
+        "description, release_year, rating, category, language). "
+        "No consultes otras tablas ni vistas."
+    )
+
 
 @mcp.tool()
 def ejecutar_consulta_sakila(query_sql: str) -> str:
-    """
-    Ejecuta una consulta SQL de solo lectura en Sakila.
-    query_sql: La consulta SELECT estricta en formato PostgreSQL.
-    """
-    conexion_db = {
-        "dbname": "sakila",
-        "user": "postgres",
-        "password": "TU_CONTRASEÑA", # Asegurate de mantener tu clave real acá
-        "host": "localhost",
-        "port": "5432", # Usá el puerto que te funcionó en la prueba anterior
-        "client_encoding": "UTF-8"
-    }
-    
-    # Bloqueo de seguridad para evitar modificaciones en la base
-    if any(palabra in query_sql.upper() for palabra in ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER"]):
-        return "Error de seguridad: Solo se permiten operaciones de lectura (SELECT)."
-        
+    """Ejecuta una consulta SQL de solo lectura contra las vistas de Sakila."""
+    comandos_bloqueados = ("DROP", "DELETE", "UPDATE", "INSERT", "ALTER")
+    query_mayusculas = query_sql.upper()
+
+    if any(comando in query_mayusculas for comando in comandos_bloqueados):
+        return json.dumps(
+            {"error": "Solo se permiten consultas de lectura; comando de mutación detectado."}
+        )
+
+    consulta = query_sql.rstrip().rstrip(";")
+    if "LIMIT" not in query_mayusculas:
+        consulta += " LIMIT 20"
+
+    conexion = None
     try:
-        conn = psycopg2.connect(**conexion_db)
-        cursor = conn.cursor()
-        
-        # Límite forzado para ahorrar tokens si la IA olvida ponerlo
-        if "LIMIT" not in query_sql.upper():
-            query_sql += " LIMIT 20"
-            
-        cursor.execute(query_sql)
-        nombres_columnas = [desc[0] for desc in cursor.description]
-        filas = cursor.fetchall()
-        
-        cursor.close()
-        conn.close()
-        
-        resultados = [dict(zip(nombres_columnas, fila)) for fila in filas]
-        return json.dumps(resultados, indent=2, default=str)
-        
-    except Exception as e:
-        return f"Error al ejecutar SQL: {str(e)}"
+        conexion = connection_pool.getconn()
+        with conexion.cursor() as cursor:
+            cursor.execute(consulta)
+            columnas = [columna[0] for columna in cursor.description]
+            filas = cursor.fetchall()
+            resultados = [dict(zip(columnas, fila)) for fila in filas]
+            return json.dumps(resultados, default=str, ensure_ascii=False)
+    except psycopg2.Error as error:
+        return json.dumps({"error": str(error)}, ensure_ascii=False)
+    finally:
+        if conexion is not None:
+            connection_pool.putconn(conexion)
+
+
+if __name__ == "__main__":
+    mcp.run()
