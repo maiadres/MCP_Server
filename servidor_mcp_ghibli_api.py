@@ -1,7 +1,6 @@
 """Servidor MCP para consultar películas mediante la API pública de Studio Ghibli."""
 
 from typing import Any
-
 import httpx
 from uuid import UUID
 from fastmcp import FastMCP
