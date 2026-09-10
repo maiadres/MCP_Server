@@ -3,6 +3,7 @@
 from typing import Any
 
 import httpx
+from uuid import UUID
 from fastmcp import FastMCP
 
 
@@ -13,10 +14,19 @@ mcp = FastMCP("Studio Ghibli Movie API")
 
 async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
     """Ejecuta una petición GET a la API pública de Studio Ghibli."""
-    async with httpx.AsyncClient(base_url=GHIBLI_API_BASE_URL, timeout=15.0) as client:
-        response = await client.get(endpoint)
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient(base_url=GHIBLI_API_BASE_URL, timeout=10.0) as client:
+            response = await client.get(endpoint)
+            response.raise_for_status()
+            return response.json()
+    except httpx.TimeoutException as error:
+        raise RuntimeError("La API de Studio Ghibli tardó demasiado en responder.") from error
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 404:
+            raise ValueError("No se encontró la película solicitada.") from error
+        raise RuntimeError("La API de Studio Ghibli devolvió un error.") from error
+    except httpx.RequestError as error:
+        raise RuntimeError("No fue posible conectar con la API de Studio Ghibli.") from error
 
 
 def resumir_pelicula(pelicula: dict[str, Any]) -> dict[str, str | None]:
@@ -43,9 +53,11 @@ async def search_ghibli_films(query: str) -> list[dict[str, str | None]]:
     Returns:
         Coincidencias con identificador, título, año de estreno y sinopsis.
     """
+    texto = query.casefold().strip()
+    if not texto:
+        raise ValueError("query no puede estar vacío.")
     data = await ghibli_get("/films")
     peliculas: list[dict[str, Any]] = data if isinstance(data, list) else []
-    texto = query.casefold().strip()
     coincidencias = [
         pelicula
         for pelicula in peliculas
@@ -69,6 +81,10 @@ async def get_ghibli_film_details(film_id: str) -> dict[str, str | None]:
     Returns:
         Título, sinopsis, director, productor, año, duración y puntaje de Rotten Tomatoes.
     """
+    try:
+        UUID(film_id)
+    except ValueError as error:
+        raise ValueError("film_id debe ser un UUID válido devuelto por search_ghibli_films.") from error
     data = await ghibli_get(f"/films/{film_id}")
     pelicula: dict[str, Any] = data if isinstance(data, dict) else {}
     return {
@@ -103,6 +119,8 @@ async def list_ghibli_films(
     """
     if min_score is not None and not 0 <= min_score <= 100:
         raise ValueError("min_score debe estar entre 0 y 100.")
+    if year is not None and not 1900 <= year <= 2100:
+        raise ValueError("year debe estar entre 1900 y 2100.")
 
     data = await ghibli_get("/films")
     peliculas: list[dict[str, Any]] = data if isinstance(data, list) else []
@@ -117,5 +135,4 @@ async def list_ghibli_films(
 
 if __name__ == "__main__":
     mcp.run()
-
 
