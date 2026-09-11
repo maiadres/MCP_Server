@@ -21,7 +21,7 @@ La propuesta de valor es entregar a agentes de IA una interfaz pequeña y explí
 ### Estructura de directorios
 
 ```text
-MCP-1/
+MCP/
 ├── .env                              # Credenciales locales
 ├── .gitignore                        # Exclusión de secretos, entornos y cachés
 ├── servidor_mcp_sakila.py             # Servidor MCP para PostgreSQL/Sakila
