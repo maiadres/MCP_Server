@@ -1,4 +1,4 @@
-# Integración de Sakila y Studio Ghibli-MCP_Server 
+# Integración de Sakila y Studio Ghibli
 
 ## 1. Descripción General
 
