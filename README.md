@@ -187,7 +187,7 @@ list_ghibli_films(year=2001, min_score=90)
 
 Las sinopsis de Ghibli provienen en inglés. Las herramientas incluyen `source_language: "en"`; el cliente de IA debe presentar o resumir el contenido en español sin alterar fechas, puntajes, créditos ni títulos de origen.
 
-## 6. Decisiones de Diseño y Retos Técnicos
+## 6. Decisiones de Diseño
 
 **Servidores separados.** Sakila y Ghibli se ejecutan de manera independiente para aislar dependencias, fallos y superficies de seguridad. Una indisponibilidad de la API externa no debe afectar la base local.
 
