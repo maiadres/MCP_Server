@@ -30,7 +30,6 @@ MCP/
 │   ├── postgres-sakila-schema.sql     # Esquema de Sakila
 │   └── postgres-sakila-insert-data.sql# Datos de Sakila
 ├── .venv/                             # Entorno virtual local
-└── __pycache__/                       # Caché de Python
 ```
 
 ### Componentes y flujo de datos
