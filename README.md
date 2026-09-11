@@ -4,17 +4,17 @@
 
 MCP-1 es un proyecto de integración de fuentes de datos mediante **Model Context Protocol (MCP)**. Expone dos servidores independientes para que un cliente compatible con MCP pueda consultar información estructurada sin acceder directamente a la base de datos ni a la API externa.
 
-El servidor **Sakila MCP** responde consultas analíticas de solo lectura sobre dos vistas de PostgreSQL: alquileres y catálogo. El servidor **Studio Ghibli MCP** consulta la API pública de Studio Ghibli y entrega datos resumidos de sus películas.
+El servidor **Sakila MCP** permite inspeccionar el esquema público de PostgreSQL y ejecutar consultas dinámicas de solo lectura sobre la base de datos. El servidor **Studio Ghibli MCP** consulta la API pública de Studio Ghibli y entrega datos resumidos de sus películas.
 
 Características principales:
 
 - Separación de responsabilidades entre datos internos (Sakila) y datos externos (Studio Ghibli).
 - Herramientas MCP con tipos, docstrings y respuestas estructuradas.
-- Protección de Sakila mediante un pool de conexiones, validación conservadora de SQL, límite de resultados y usuario de mínimo privilegio.
+- Protección de Sakila mediante un pool de conexiones, validación de consultas `SELECT` y usuario de mínimo privilegio.
 - Consultas HTTP asíncronas, con validación de parámetros y errores controlados en el servidor Ghibli.
 - Variables de entorno para credenciales.
 
-La propuesta de valor es entregar a agentes de IA una interfaz pequeña, explícita y segura para explorar datos de películas, sin exponer tablas base ni credenciales.
+La propuesta de valor es entregar a agentes de IA una interfaz pequeña y explícita para explorar datos de películas sin exponer credenciales. La seguridad de solo lectura se aplica mediante validación en la aplicación y permisos PostgreSQL.
 
 ## 2. Arquitectura y Diseño
 
@@ -40,9 +40,11 @@ Cliente MCP (Claude, Codex u otro)
         │
         ├── stdio ──> servidor_mcp_sakila.py
         │                  │
+        │                  ├── obtener_esquema_base_datos()
+        │                  ├── ejecutar_consulta_sql(consulta)
         │                  ├── validar_consulta()
         │                  ├── ThreadedConnectionPool
-        │                  └── PostgreSQL / vistas autorizadas
+        │                  └── PostgreSQL / esquema public
         │
         └── stdio ──> servidor_mcp_ghibli_api.py
                            │
@@ -53,7 +55,7 @@ Cliente MCP (Claude, Codex u otro)
 
 El diseño sigue una arquitectura de **adaptadores**: cada servidor encapsula el protocolo y particularidades de una fuente. Las funciones decoradas con `@mcp.tool()` constituyen la interfaz pública para el modelo; las funciones auxiliares permanecen privadas y centralizan validación, acceso HTTP o acceso a datos.
 
-En Sakila, el flujo es: herramienta MCP → validación de un único `SELECT` → control de vistas y `LIMIT` → pool PostgreSQL → respuesta JSON estructurada. En Ghibli, el flujo es: herramienta MCP → validación → petición HTTP asíncrona → filtrado de campos → respuesta resumida.
+En Sakila, el flujo es: herramienta MCP → inspección del esquema o validación de un único `SELECT` → pool PostgreSQL → respuesta JSON estructurada. En Ghibli, el flujo es: herramienta MCP → validación → petición HTTP asíncrona → filtrado de campos → respuesta resumida.
 
 ## 3. Stack Tecnológico
 
@@ -61,7 +63,7 @@ En Sakila, el flujo es: herramienta MCP → validación de un único `SELECT` �
 |---|---|---|
 | Python 3.11+ | Lenguaje de implementación | Tipado moderno, asincronía nativa y ecosistema para MCP y PostgreSQL. |
 | FastMCP | Framework de ambos servidores | Registra herramientas mediante decoradores y expone el protocolo MCP por `stdio`. |
-| PostgreSQL | Base de datos interna Sakila | Base relacional para catálogo y alquileres; las vistas reducen la superficie expuesta. |
+| PostgreSQL | Base de datos interna Sakila | Base relacional consultada dinámicamente mediante el esquema `public`. |
 | psycopg2 | Driver PostgreSQL | Proporciona el pool de conexiones seguro para hilos. |
 | httpx | Cliente HTTP asíncrono | Consume Studio Ghibli sin bloquear el ciclo asíncrono. |
 | python-dotenv | Configuración local | Carga `DB_USER` y `DB_PASSWORD` desde `.env`, sin incorporarlos al código. |
@@ -103,7 +105,7 @@ sakila/postgres-sakila-schema.sql
 sakila/postgres-sakila-insert-data.sql
 ```
 
-Antes de iniciar el servidor, deben existir las vistas `vista_alquileres` y `vista_catalogo`, con las columnas descritas por la herramienta `leer_esquema_vistas`.
+No es necesario crear vistas para iniciar el servidor actual. Solo se requieren el esquema y los datos de Sakila.
 
 ### Configurar credenciales
 
@@ -114,7 +116,7 @@ DB_USER=sakila_mcp_readonly
 DB_PASSWORD=REEMPLAZAR_POR_UNA_CONTRASENA_SEGURA
 ```
 
-El usuario debe tener permiso `SELECT` exclusivamente sobre `vista_alquileres` y `vista_catalogo`. No use el usuario administrador `postgres` para el servidor MCP. Verifique además que el puerto configurado en `servidor_mcp_sakila.py` (`5434`) coincida con su instalación local.
+El usuario debe tener permiso `CONNECT` sobre la base `sakila` y permiso `SELECT` sobre las tablas y vistas que se quieran consultar del esquema `public`. No use el usuario administrador `postgres` para el servidor MCP. Verifique además que el puerto configurado en `servidor_mcp_sakila.py` (`5434`) coincida con su instalación local.
 
 ### Ejecución local y producción
 
@@ -145,21 +147,21 @@ Tras modificar un servidor, reinicie el proceso o recargue la configuración MCP
 
 ### Herramientas de Sakila
 
-Primero, el cliente debe consultar el contrato de datos:
+`obtener_esquema_base_datos()` consulta `information_schema.columns` y devuelve un string JSON agrupado por tabla, con el nombre de cada columna y su tipo de dato. Es recomendable llamar primero a esta herramienta para que la IA conozca la estructura actual de la base de datos.
+
+`ejecutar_consulta_sql(consulta)` recibe SQL libre de solo lectura y devuelve un string JSON con una lista de diccionarios. Solo acepta consultas que comiencen por `SELECT`, ignorando espacios iniciales y mayúsculas/minúsculas. También rechaza comentarios, múltiples sentencias y operaciones como `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `GRANT`, `REVOKE`, `COPY`, `CALL`, `DO`, `VACUUM`, `SET` y `SHOW`.
+
+Ejemplo:
 
 ```text
-leer_esquema_vistas()
-```
+obtener_esquema_base_datos()
 
-Después puede ejecutar consultas de solo lectura. Ejemplo:
-
-```text
-ejecutar_consulta_sakila(
-  "SELECT title, category, rating FROM vista_catalogo WHERE category = 'Action' LIMIT 10"
+ejecutar_consulta_sql(
+  "SELECT title, release_year, rating FROM film WHERE rating = 'PG' LIMIT 10"
 )
 ```
 
-La herramienta rechaza comandos de mutación, comentarios, tablas ajenas a las dos vistas, más de una sentencia y límites mayores a 20. Si no se proporciona `LIMIT`, agrega `LIMIT 20` automáticamente.
+No se aplica un límite automático de filas. Incluye un `LIMIT` apropiado para evitar respuestas demasiado grandes. Los errores de PostgreSQL se devuelven como string sin crashear el servidor.
 
 ### Herramientas de Studio Ghibli
 
@@ -189,9 +191,9 @@ Las sinopsis de Ghibli provienen en inglés. Las herramientas incluyen `source_l
 
 **Servidores separados.** Sakila y Ghibli se ejecutan de manera independiente para aislar dependencias, fallos y superficies de seguridad. Una indisponibilidad de la API externa no debe afectar la base local.
 
-**Principio de mínimo privilegio.** El servidor Sakila no debe usar un administrador de PostgreSQL. Se diseñó para un usuario de solo lectura con acceso exclusivo a las vistas autorizadas. La validación del SQL es una defensa adicional, no un reemplazo de los permisos reales de la base.
+**Principio de mínimo privilegio.** El servidor Sakila no debe usar un administrador de PostgreSQL. Se diseñó para un usuario de solo lectura con acceso `SELECT` sobre las tablas que se quieran consultar. La validación del SQL es una defensa adicional, no un reemplazo de los permisos reales de la base.
 
-**Control de contexto y rendimiento.** Ambos servidores devuelven solo los campos necesarios. Sakila limita filas a 20 y Ghibli limita los resultados de búsqueda a 10, evitando saturar el contexto del modelo.
+**Control de contexto y rendimiento.** Ghibli limita las búsquedas por título a 10 resultados y ambos servidores devuelven campos resumidos. En Sakila, el cliente debe incluir `LIMIT` en las consultas, porque la herramienta no impone un límite automático.
 
 **Asincronía para la API externa.** Ghibli usa `httpx.AsyncClient` para evitar bloqueos durante solicitudes de red. También diferencia timeouts, errores de transporte, respuestas 404 y errores del proveedor.
 
