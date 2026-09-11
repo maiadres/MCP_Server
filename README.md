@@ -1,8 +1,8 @@
-# MCP-1 — Integración de Sakila y Studio Ghibli
+# Integración de Sakila y Studio Ghibli
 
 ## 1. Descripción General
 
-MCP-1 es un proyecto de integración de fuentes de datos mediante **Model Context Protocol (MCP)**. Expone dos servidores independientes para que un cliente compatible con MCP pueda consultar información estructurada sin acceder directamente a la base de datos ni a la API externa.
+MCP_Server es un proyecto de integración de fuentes de datos mediante **Model Context Protocol (MCP)**. Expone dos servidores independientes para que un cliente compatible con MCP pueda consultar información estructurada sin acceder directamente a la base de datos ni a la API externa.
 
 El servidor **Sakila MCP** permite inspeccionar el esquema público de PostgreSQL y ejecutar consultas dinámicas de solo lectura sobre la base de datos. El servidor **Studio Ghibli MCP** consulta la API pública de Studio Ghibli y entrega datos resumidos de sus películas.
 
@@ -82,7 +82,7 @@ En Sakila, el flujo es: herramienta MCP → inspección del esquema o validació
 
 ```powershell
 git clone <URL_DEL_REPOSITORIO>
-cd MCP-1
+cd MCP
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -137,8 +137,8 @@ python servidor_mcp_ghibli_api.py
 Producción: configure el cliente MCP o el supervisor de procesos para ejecutar exactamente los mismos comandos usando el entorno virtual del proyecto:
 
 ```powershell
-C:\ruta\a\MCP-1\.venv\Scripts\python.exe C:\ruta\a\MCP-1\servidor_mcp_sakila.py
-C:\ruta\a\MCP-1\.venv\Scripts\python.exe C:\ruta\a\MCP-1\servidor_mcp_ghibli_api.py
+C:\ruta\a\MCP\.venv\Scripts\python.exe C:\ruta\a\MCP\servidor_mcp_sakila.py
+C:\ruta\a\MCP\.venv\Scripts\python.exe C:\ruta\a\MCP\servidor_mcp_ghibli_api.py
 ```
 
 Tras modificar un servidor, reinicie el proceso o recargue la configuración MCP del cliente para que detecte las herramientas y docstrings actualizados.
@@ -187,7 +187,7 @@ list_ghibli_films(year=2001, min_score=90)
 
 Las sinopsis de Ghibli provienen en inglés. Las herramientas incluyen `source_language: "en"`; el cliente de IA debe presentar o resumir el contenido en español sin alterar fechas, puntajes, créditos ni títulos de origen.
 
-## 6. Decisiones de Diseño y Retos Técnicos
+## 6. Decisiones de Diseño
 
 **Servidores separados.** Sakila y Ghibli se ejecutan de manera independiente para aislar dependencias, fallos y superficies de seguridad. Una indisponibilidad de la API externa no debe afectar la base local.
 
