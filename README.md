@@ -14,8 +14,6 @@ Características principales:
 - Consultas HTTP asíncronas, con validación de parámetros y errores controlados en el servidor Ghibli.
 - Variables de entorno para credenciales.
 
-La propuesta de valor es entregar a agentes de IA una interfaz pequeña y explícita para explorar datos de películas sin exponer credenciales. La seguridad de solo lectura se aplica mediante validación en la aplicación y permisos PostgreSQL.
-
 ## 2. Arquitectura y Diseño
 
 ### Estructura de directorios
