@@ -162,6 +162,24 @@ No se aplica un límite automático de filas. Incluye un `LIMIT` apropiado para 
 
 ### Herramientas de Studio Ghibli
 
+Consulta flexible del catálogo completo:
+
+```text
+query_ghibli_films(
+  min_score=0,
+  max_score=100,
+  sort_by="rt_score",
+  descending=False,
+  limit=10
+)
+```
+
+`query_ghibli_films` funciona como una consulta de solo lectura sobre la tabla
+de películas: admite filtros por título, año y rango de `rt_score`, además de
+ordenamiento por `rt_score`, `release_date` o `title`. El catálogo se obtiene
+una vez y queda en caché durante cinco minutos; las consultas posteriores se
+resuelven en memoria.
+
 Buscar una película por título:
 
 ```text
@@ -182,6 +200,17 @@ Filtrar por año y puntaje de Rotten Tomatoes:
 list_ghibli_films(year=2001, min_score=90)
 ```
 
+Obtener las películas peor valoradas:
+
+```text
+get_worst_rated_ghibli_films(limit=5)
+```
+
+El ranking peor valorado usa `query_ghibli_films` con `sort_by="rt_score"` y
+orden ascendente. La API no ofrece ordenamiento ni filtrado nativo por ese
+campo, por lo que el servidor procesa el catálogo cacheado y no consulta los
+UUID de las películas individualmente.
+
 Las sinopsis de Ghibli provienen en inglés. Las herramientas incluyen `source_language: "en"`; el cliente de IA debe presentar o resumir el contenido en español sin alterar fechas, puntajes, créditos ni títulos de origen.
 
 ## 6. Decisiones de Diseño
@@ -191,6 +220,10 @@ Las sinopsis de Ghibli provienen en inglés. Las herramientas incluyen `source_l
 **Principio de mínimo privilegio.** El servidor Sakila no debe usar un administrador de PostgreSQL. Se diseñó para un usuario de solo lectura con acceso `SELECT` sobre las tablas que se quieran consultar. La validación del SQL es una defensa adicional, no un reemplazo de los permisos reales de la base.
 
 **Control de contexto y rendimiento.** Ghibli limita las búsquedas por título a 10 resultados y ambos servidores devuelven campos resumidos. En Sakila, el cliente debe incluir `LIMIT` en las consultas, porque la herramienta no impone un límite automático.
+
+El catálogo de películas se descarga una vez por TTL y se reutiliza para
+consultas, búsquedas y rankings; las llamadas a `/films/{id}` quedan reservadas
+para detalles explícitos de una película concreta.
 
 **Asincronía para la API externa.** Ghibli usa `httpx.AsyncClient` para evitar bloqueos durante solicitudes de red. También diferencia timeouts, errores de transporte, respuestas 404 y errores del proveedor.
 

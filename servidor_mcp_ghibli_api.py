@@ -1,18 +1,29 @@
 """Servidor MCP para consultar películas mediante la API pública de Studio Ghibli."""
 
-from typing import Any
+import asyncio
+import time
+from typing import Any, Literal
 import httpx
 from uuid import UUID
 from fastmcp import FastMCP
 
-
+# ---------------------------------------------------------------------------
+# Configuración del servidor MCP para Studio Ghibli
+# ---------------------------------------------------------------------------
 GHIBLI_API_BASE_URL = "https://ghibliapi.dev"
 SOURCE_LANGUAGE = "en"
+CACHE_TTL_SECONDS = 300
+
 mcp = FastMCP("Studio Ghibli Movie API")
+
+# Cache en memoria para evitar repetir la carga completa del catálogo.
+_catalogo_cache: list[dict[str, Any]] | None = None
+_catalogo_cache_expira_en = 0.0
+_catalogo_cache_lock = asyncio.Lock()
 
 
 async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
-    """Ejecuta una petición GET a la API pública de Studio Ghibli."""
+    """Obtiene datos de la API pública de Studio Ghibli."""
     try:
         async with httpx.AsyncClient(base_url=GHIBLI_API_BASE_URL, timeout=10.0) as client:
             response = await client.get(endpoint)
@@ -28,109 +39,164 @@ async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
         raise RuntimeError("No fue posible conectar con la API de Studio Ghibli.") from error
 
 
-def resumir_pelicula(pelicula: dict[str, Any]) -> dict[str, str | None]:
-    """Reduce una película de Ghibli a los campos relevantes para el modelo."""
+# ---------------------------------------------------------------------------
+# Carga del catálogo y cache
+# ---------------------------------------------------------------------------
+
+
+async def get_film_catalog() -> list[dict[str, Any]]:
+    """Devuelve el catálogo de películas en caché."""
+    global _catalogo_cache, _catalogo_cache_expira_en
+
+    ahora = time.monotonic()
+    if _catalogo_cache is not None and ahora < _catalogo_cache_expira_en:
+        return _catalogo_cache
+
+    # Evita varias descargas simultáneas cuando la caché caduca.
+    async with _catalogo_cache_lock:
+        ahora = time.monotonic()
+        if _catalogo_cache is not None and ahora < _catalogo_cache_expira_en:
+            return _catalogo_cache
+
+        data = await ghibli_get(
+            "/films?fields=id,title,original_title,description,release_date,rt_score&limit=250"
+        )
+        _catalogo_cache = data if isinstance(data, list) else []
+        _catalogo_cache_expira_en = time.monotonic() + CACHE_TTL_SECONDS
+        return _catalogo_cache
+
+
+# ---------------------------------------------------------------------------
+# Helpers para normalizar y ordenar resultados
+# ---------------------------------------------------------------------------
+
+def summarize_film(film: dict[str, Any]) -> dict[str, str | None]:
+    """Devuelve un resumen compacto de la película."""
     return {
-        "id": pelicula.get("id"),
-        "title": pelicula.get("title"),
-        "release_date": pelicula.get("release_date"),
-        "overview": pelicula.get("description"),
+        "id": film.get("id"),
+        "title": film.get("title"),
+        "release_date": film.get("release_date"),
+        "rotten_tomatoes_score": film.get("rt_score"),
+        "overview": film.get("description"),
         "source_language": SOURCE_LANGUAGE,
     }
 
 
+def rt_score_value(film: dict[str, Any]) -> int:
+    """Convierte el puntaje a entero para ordenar sin errores."""
+    try:
+        return int(film.get("rt_score", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def filter_and_sort_films(
+    films: list[dict[str, Any]],
+    title_contains: str | None,
+    year: int | None,
+    min_score: int | None,
+    max_score: int | None,
+    sort_by: Literal["rt_score", "release_date", "title"],
+    descending: bool,
+    limit: int,
+) -> list[dict[str, str | None]]:
+    """Aplica filtros, orden y límite a la lista de películas."""
+    text = title_contains.casefold().strip() if title_contains else None
+    if title_contains is not None and not text:
+        raise ValueError("title_contains no puede estar vacío.")
+
+    matches = []
+    for film in films:
+        title = str(film.get("title", ""))
+        original_title = str(film.get("original_title", ""))
+        score = film.get("rt_score")
+        score_value = rt_score_value(film)
+
+        if text and text not in title.casefold() and text not in original_title.casefold():
+            continue
+        if year is not None and film.get("release_date") != str(year):
+            continue
+        if min_score is not None and (score in (None, "") or score_value < min_score):
+            continue
+        if max_score is not None and (score in (None, "") or score_value > max_score):
+            continue
+        matches.append(film)
+
+    if sort_by == "rt_score":
+        matches.sort(key=rt_score_value, reverse=descending)
+    elif sort_by == "release_date":
+        matches.sort(
+            key=lambda film: int(film.get("release_date", 0)),
+            reverse=descending,
+        )
+    else:
+        matches.sort(
+            key=lambda film: str(film.get("title", "")).casefold(),
+            reverse=descending,
+        )
+
+    return [summarize_film(film) for film in matches[:limit]]
+
+
+# ---------------------------------------------------------------------------
+# Tools públicas del servidor MCP
+# ---------------------------------------------------------------------------
+
 @mcp.tool()
-async def search_ghibli_films(query: str) -> list[dict[str, str | None]]:
-    """Busca películas de Studio Ghibli por título.
+async def query_ghibli_films(
+    title_contains: str | None = None,
+    year: int | None = None,
+    min_score: int | None = None,
+    max_score: int | None = None,
+    sort_by: Literal["rt_score", "release_date", "title"] = "rt_score",
+    descending: bool = False,
+    limit: int = 50,
+) -> list[dict[str, str | None]]:
+    """Lista películas del catálogo en caché con filtros y orden."""
+    if year is not None and not 1900 <= year <= 2100:
+        raise ValueError("year debe estar entre 1900 y 2100.")
+    if min_score is not None and not 0 <= min_score <= 100:
+        raise ValueError("min_score debe estar entre 0 y 100.")
+    if max_score is not None and not 0 <= max_score <= 100:
+        raise ValueError("max_score debe estar entre 0 y 100.")
+    if min_score is not None and max_score is not None and min_score > max_score:
+        raise ValueError("min_score no puede ser mayor que max_score.")
+    if not 1 <= limit <= 250:
+        raise ValueError("limit debe estar entre 1 y 250.")
 
-    La sinopsis de la fuente está en inglés. Al responder al usuario, tradúcela
-    o resúmela en español sin modificar datos objetivos como título y año.
-
-    Args:
-        query: Título completo o parcial de la película buscada.
-
-    Returns:
-        Coincidencias con identificador, título, año de estreno y sinopsis.
-    """
-    texto = query.casefold().strip()
-    if not texto:
-        raise ValueError("query no puede estar vacío.")
-    data = await ghibli_get("/films")
-    peliculas: list[dict[str, Any]] = data if isinstance(data, list) else []
-    coincidencias = [
-        pelicula
-        for pelicula in peliculas
-        if texto in str(pelicula.get("title", "")).casefold()
-        or texto in str(pelicula.get("original_title", "")).casefold()
-    ]
-    return [resumir_pelicula(pelicula) for pelicula in coincidencias[:10]]
-
+    films = await get_film_catalog()
+    return filter_and_sort_films(
+        films,
+        title_contains,
+        year,
+        min_score,
+        max_score,
+        sort_by,
+        descending,
+        limit,
+    )
 
 @mcp.tool()
 async def get_ghibli_film_details(film_id: str) -> dict[str, str | None]:
-    """Obtiene los datos principales de una película de Studio Ghibli.
-
-    La sinopsis de la fuente está en inglés. Al responder al usuario, tradúcela
-    o resúmela en español sin modificar datos objetivos como título, año,
-    director, duración y puntaje.
-
-    Args:
-        film_id: Identificador UUID obtenido con search_ghibli_films.
-
-    Returns:
-        Título, sinopsis, director, productor, año, duración y puntaje de Rotten Tomatoes.
-    """
+    """Devuelve los datos principales de una película de Studio Ghibli."""
     try:
         UUID(film_id)
     except ValueError as error:
-        raise ValueError("film_id debe ser un UUID válido devuelto por search_ghibli_films.") from error
+        raise ValueError("film_id debe ser un UUID válido devuelto por query_ghibli_films.") from error
+
     data = await ghibli_get(f"/films/{film_id}")
-    pelicula: dict[str, Any] = data if isinstance(data, dict) else {}
+    film: dict[str, Any] = data if isinstance(data, dict) else {}
     return {
-        "id": pelicula.get("id"),
-        "title": pelicula.get("title"),
-        "overview": pelicula.get("description"),
-        "director": pelicula.get("director"),
-        "producer": pelicula.get("producer"),
-        "release_date": pelicula.get("release_date"),
-        "running_time_minutes": pelicula.get("running_time"),
-        "rotten_tomatoes_score": pelicula.get("rt_score"),
+        "id": film.get("id"),
+        "title": film.get("title"),
+        "overview": film.get("description"),
+        "director": film.get("director"),
+        "producer": film.get("producer"),
+        "release_date": film.get("release_date"),
+        "running_time_minutes": film.get("running_time"),
+        "rotten_tomatoes_score": film.get("rt_score"),
         "source_language": SOURCE_LANGUAGE,
     }
-
-
-@mcp.tool()
-async def list_ghibli_films(
-    year: int | None = None,
-    min_score: int | None = None,
-) -> list[dict[str, str | None]]:
-    """Lista películas de Studio Ghibli con filtros opcionales de año y puntaje.
-
-    Las sinopsis de la fuente están en inglés. Al responder al usuario,
-    tradúcelas o resúmelas en español sin alterar los datos objetivos.
-
-    Args:
-        year: Año de estreno a filtrar, por ejemplo 2001.
-        min_score: Puntaje mínimo de Rotten Tomatoes entre 0 y 100.
-
-    Returns:
-        Películas coincidentes en un formato resumido.
-    """
-    if min_score is not None and not 0 <= min_score <= 100:
-        raise ValueError("min_score debe estar entre 0 y 100.")
-    if year is not None and not 1900 <= year <= 2100:
-        raise ValueError("year debe estar entre 1900 y 2100.")
-
-    data = await ghibli_get("/films")
-    peliculas: list[dict[str, Any]] = data if isinstance(data, list) else []
-    coincidencias = [
-        pelicula
-        for pelicula in peliculas
-        if (year is None or pelicula.get("release_date") == str(year))
-        and (min_score is None or int(pelicula.get("rt_score", 0)) >= min_score)
-    ]
-    return [resumir_pelicula(pelicula) for pelicula in coincidencias]
-
 
 if __name__ == "__main__":
     mcp.run()
