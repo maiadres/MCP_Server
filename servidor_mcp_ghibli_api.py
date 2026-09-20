@@ -59,7 +59,7 @@ async def get_film_catalog() -> list[dict[str, Any]]:
             return _catalogo_cache
 
         data = await ghibli_get(
-            "/films?fields=id,title,original_title,description,release_date,rt_score&limit=250"
+            "/films?fields=id,title,original_title,director,release_date,rt_score&limit=250"
         )
         _catalogo_cache = data if isinstance(data, list) else []
         _catalogo_cache_expira_en = time.monotonic() + CACHE_TTL_SECONDS
@@ -70,15 +70,13 @@ async def get_film_catalog() -> list[dict[str, Any]]:
 # Helpers para normalizar y ordenar resultados
 # ---------------------------------------------------------------------------
 
-def summarize_film(film: dict[str, Any]) -> dict[str, str | None]:
+def summarize_film(film: dict[str, Any]) -> dict[str, Any]:
     """Devuelve un resumen compacto de la película."""
     return {
         "id": film.get("id"),
         "title": film.get("title"),
         "release_date": film.get("release_date"),
-        "rotten_tomatoes_score": film.get("rt_score"),
-        "overview": film.get("description"),
-        "source_language": SOURCE_LANGUAGE,
+        "rotten_tomatoes_score": rt_score_value(film),
     }
 
 
@@ -99,11 +97,15 @@ def filter_and_sort_films(
     sort_by: Literal["rt_score", "release_date", "title"],
     descending: bool,
     limit: int,
-) -> list[dict[str, str | None]]:
+    director: str | None,
+) -> list[dict[str, Any]]:
     """Aplica filtros, orden y límite a la lista de películas."""
     text = title_contains.casefold().strip() if title_contains else None
     if title_contains is not None and not text:
         raise ValueError("title_contains no puede estar vacío.")
+    director_text = director.casefold().strip() if director else None
+    if director is not None and not director_text:
+        raise ValueError("director no puede estar vacío.")
 
     matches = []
     for film in films:
@@ -113,6 +115,8 @@ def filter_and_sort_films(
         score_value = rt_score_value(film)
 
         if text and text not in title.casefold() and text not in original_title.casefold():
+            continue
+        if director_text and director_text not in str(film.get("director", "")).casefold():
             continue
         if year is not None and film.get("release_date") != str(year):
             continue
@@ -151,8 +155,14 @@ async def query_ghibli_films(
     sort_by: Literal["rt_score", "release_date", "title"] = "rt_score",
     descending: bool = False,
     limit: int = 50,
-) -> list[dict[str, str | None]]:
-    """Lista películas del catálogo en caché con filtros y orden."""
+    director: str | None = None,
+) -> list[dict[str, Any]]:
+    """Busca películas livianamente y devuelve id, título, año y puntuación.
+
+    Usá esta herramienta para filtrar o comparar películas y obtener sus ids.
+    Para ver el director, la duración o la sinopsis, primero obtené el id aquí
+    y después llamá a get_ghibli_film_details.
+    """
     if year is not None and not 1900 <= year <= 2100:
         raise ValueError("year debe estar entre 1900 y 2100.")
     if min_score is not None and not 0 <= min_score <= 100:
@@ -174,11 +184,16 @@ async def query_ghibli_films(
         sort_by,
         descending,
         limit,
+        director,
     )
 
 @mcp.tool()
-async def get_ghibli_film_details(film_id: str) -> dict[str, str | None]:
-    """Devuelve los datos principales de una película de Studio Ghibli."""
+async def get_ghibli_film_details(film_id: str) -> dict[str, Any]:
+    """Devuelve la ficha completa de una película a partir de su id.
+
+    Usá esta herramienta después de query_ghibli_films para consultar la
+    sinopsis, el director, el productor, la duración y otros metadatos.
+    """
     try:
         UUID(film_id)
     except ValueError as error:
@@ -192,9 +207,10 @@ async def get_ghibli_film_details(film_id: str) -> dict[str, str | None]:
         "overview": film.get("description"),
         "director": film.get("director"),
         "producer": film.get("producer"),
-        "release_date": film.get("release_date"),
-        "running_time_minutes": film.get("running_time"),
-        "rotten_tomatoes_score": film.get("rt_score"),
+        "running_time_minutes": int(film["running_time"]) if film.get("running_time") else None,
+        "original_title": film.get("original_title"),
+        "original_title_romanised": film.get("original_title_romanised"),
+        "url": film.get("url"),
         "source_language": SOURCE_LANGUAGE,
     }
 
