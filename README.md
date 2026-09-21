@@ -1,92 +1,71 @@
 # Integración de Sakila y Studio Ghibli
 
-## 1. Descripción General
+## 1. Descripción general
 
-MCP_Server es un proyecto de integración de fuentes de datos mediante **Model Context Protocol (MCP)**. Expone dos servidores independientes para que un cliente compatible con MCP pueda consultar información estructurada sin acceder directamente a la base de datos ni a la API externa.
+Este proyecto contiene dos servidores independientes basados en **Model Context
+Protocol (MCP)**:
 
-El servidor **Sakila MCP** permite inspeccionar el esquema público de PostgreSQL y ejecutar consultas dinámicas de solo lectura sobre la base de datos. El servidor **Studio Ghibli MCP** consulta la API pública de Studio Ghibli y entrega datos resumidos de sus películas.
+- **Sakila MCP** consulta una base PostgreSQL local.
+- **Studio Ghibli MCP** consulta el catálogo de películas mediante HTTP.
 
-Características principales:
+Ambos servidores registran sus tools con FastMCP. No hay recursos ni prompts
+MCP definidos en el código.
 
-- Separación de responsabilidades entre datos internos (Sakila) y datos externos (Studio Ghibli).
-- Herramientas MCP con tipos, docstrings y respuestas estructuradas.
-- Protección de Sakila mediante un pool de conexiones, validación de consultas `SELECT` y usuario de mínimo privilegio.
-- Consultas HTTP asíncronas, con validación de parámetros y errores controlados en el servidor Ghibli.
-- Variables de entorno para credenciales.
-
-## 2. Arquitectura y Diseño
-
-### Estructura de directorios
+## 2. Estructura del proyecto
 
 ```text
 MCP/
-├── .env                              # Credenciales locales
-├── .gitignore                        # Exclusión de secretos, entornos y cachés
-├── servidor_mcp_sakila.py             # Servidor MCP para PostgreSQL/Sakila
-├── servidor_mcp_ghibli_api.py         # Servidor MCP para la API Studio Ghibli
-├── sakila/
-│   ├── postgres-sakila-schema.sql     # Esquema de Sakila
-│   └── postgres-sakila-insert-data.sql# Datos de Sakila
-├── .venv/                             # Entorno virtual local
+├── README.md
+├── .env                         # Configuración local; no debe publicarse
+├── .gitignore
+├── servidor_mcp_sakila.py       # Servidor MCP para PostgreSQL/Sakila
+├── servidor_mcp_ghibli_api.py   # Servidor MCP para Studio Ghibli
+└── sakila/
+    ├── postgres-sakila-schema.sql
+    └── postgres-sakila-insert-data.sql
 ```
 
-### Componentes y flujo de datos
+El entorno `.venv/` y los archivos de caché pueden existir localmente, pero
+están excluidos por `.gitignore`.
 
-```text
-Cliente MCP (Claude, Codex u otro)
-        │
-        ├── stdio ──> servidor_mcp_sakila.py
-        │                  │
-        │                  ├── obtener_esquema_base_datos()
-        │                  ├── ejecutar_consulta_sql(consulta)
-        │                  ├── validar_consulta()
-        │                  ├── ThreadedConnectionPool
-        │                  └── PostgreSQL / esquema public
-        │
-        └── stdio ──> servidor_mcp_ghibli_api.py
-                           │
-                           ├── validación de parámetros
-                           ├── httpx asíncrono
-                           └── API pública Studio Ghibli
-```
+## 3. Tecnologías y transporte
 
-El diseño sigue una arquitectura de **adaptadores**: cada servidor encapsula el protocolo y particularidades de una fuente. Las funciones decoradas con `@mcp.tool()` constituyen la interfaz pública para el modelo; las funciones auxiliares permanecen privadas y centralizan validación, acceso HTTP o acceso a datos.
+| Tecnología | Uso |
+|---|---|
+| Python | Implementación de los servidores. El código usa sintaxis de Python 3.10 o superior. |
+| FastMCP | Registro de las tools y ejecución del servidor MCP. |
+| PostgreSQL | Base de datos Sakila. |
+| psycopg2 | Driver y `ThreadedConnectionPool` para PostgreSQL. |
+| httpx | Cliente HTTP asíncrono para la API de Studio Ghibli. |
+| python-dotenv | Carga de variables desde `.env`. |
 
-En Sakila, el flujo es: herramienta MCP → inspección del esquema o validación de un único `SELECT` → pool PostgreSQL → respuesta JSON estructurada. En Ghibli, el flujo es: herramienta MCP → validación → petición HTTP asíncrona → filtrado de campos → respuesta resumida.
+Los dos puntos de entrada llaman a `mcp.run()` sin especificar un transporte
+explícito. La ejecución está pensada para un cliente MCP que inicie cada
+proceso por `stdio`; este repositorio no implementa SSE ni Streamable HTTP.
 
-## 3. Stack Tecnológico
+## 4. Instalación y configuración
 
-| Tecnología | Uso | Justificación técnica |
-|---|---|---|
-| Python 3.11+ | Lenguaje de implementación | Tipado moderno, asincronía nativa y ecosistema para MCP y PostgreSQL. |
-| FastMCP | Framework de ambos servidores | Registra herramientas mediante decoradores y expone el protocolo MCP por `stdio`. |
-| PostgreSQL | Base de datos interna Sakila | Base relacional consultada dinámicamente mediante el esquema `public`. |
-| psycopg2 | Driver PostgreSQL | Proporciona el pool de conexiones seguro para hilos. |
-| httpx | Cliente HTTP asíncrono | Consume Studio Ghibli sin bloquear el ciclo asíncrono. |
-| python-dotenv | Configuración local | Carga `DB_USER` y `DB_PASSWORD` desde `.env`, sin incorporarlos al código. |
-| Studio Ghibli API | Fuente externa | API pública de películas sin clave de acceso. |
+### Requisitos
 
-## 4. Guía de Instalación y Configuración
+- Python compatible con la sintaxis usada por el código (3.10 o superior).
+- PostgreSQL con una base llamada `sakila`.
+- Un cliente compatible con MCP que pueda iniciar procesos Python.
 
-### Prerrequisitos
+El repositorio no incluye `requirements.txt`, `pyproject.toml`, `package.json` ni
+otro manifiesto de versiones.
 
-- Python 3.11 o superior.
-- PostgreSQL ejecutándose localmente con la base `sakila` disponible.
-- Un cliente compatible con MCP configurado para iniciar procesos Python por `stdio`.
-- PowerShell en Windows para los comandos de este documento.
+### Crear el entorno e instalar dependencias
 
-### Clonar y preparar el entorno
+En PowerShell:
 
 ```powershell
-git clone <URL_DEL_REPOSITORIO>
-cd MCP
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install fastmcp httpx psycopg2-binary python-dotenv
 ```
 
-Si PowerShell bloquea la activación del entorno virtual para la sesión actual:
+Si PowerShell bloquea la activación para la sesión actual:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -95,136 +74,191 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ### Cargar Sakila
 
-En pgAdmin, cree o seleccione la base `sakila` y ejecute, en este orden:
+Cree o seleccione la base `sakila` y ejecute estos archivos SQL en orden:
 
 ```text
 sakila/postgres-sakila-schema.sql
 sakila/postgres-sakila-insert-data.sql
 ```
 
-No es necesario crear vistas para iniciar el servidor actual. Solo se requieren el esquema y los datos de Sakila.
+El esquema SQL ya define tablas y vistas. No hay un paso separado de creación
+de vistas requerido por los servidores.
 
-### Configurar credenciales
+### Variables de entorno
 
-Cree un archivo `.env` en la raíz del repositorio:
+Cree `.env` en la raíz del proyecto:
 
 ```env
-DB_USER=sakila_mcp_readonly
 DB_PASSWORD=REEMPLAZAR_POR_UNA_CONTRASENA_SEGURA
+DB_USER=sakila_mcp_readonly
 ```
 
-El usuario debe tener permiso `CONNECT` sobre la base `sakila` y permiso `SELECT` sobre las tablas y vistas que se quieran consultar del esquema `public`. No use el usuario administrador `postgres` para el servidor MCP. Verifique además que el puerto configurado en `servidor_mcp_sakila.py` (`5434`) coincida con su instalación local.
+| Variable | Obligatoria | Valor usado |
+|---|---:|---|
+| `DB_PASSWORD` | Sí | No tiene valor predeterminado. El servidor falla al iniciar si falta. |
+| `DB_USER` | No | `sakila_mcp_readonly` si no se define. |
 
-### Ejecución local y producción
+El servidor Sakila se conecta a `localhost`, base `sakila` y puerto `5434`.
+Estos valores están fijados en `servidor_mcp_sakila.py` y no se configuran por
+variables de entorno.
 
-El transporte predeterminado de FastMCP es `stdio`; por eso no hay puerto HTTP, paso de compilación ni comando de build independiente.
+El código no crea usuarios ni permisos de PostgreSQL. Configure externamente
+un usuario con los permisos necesarios y evite usar `postgres`. Tenga en cuenta
+que el script de esquema incluido contiene `GRANT ALL ON SCHEMA public TO
+PUBLIC`; por lo tanto, no debe interpretarse como una configuración de mínimo
+privilegio lista para producción.
 
-Desarrollo, servidor Sakila:
+## 5. Ejecución
+
+Servidor Sakila:
 
 ```powershell
 python servidor_mcp_sakila.py
 ```
 
-Desarrollo, servidor Studio Ghibli:
+Servidor Studio Ghibli:
 
 ```powershell
 python servidor_mcp_ghibli_api.py
 ```
 
-Producción: configure el cliente MCP o el supervisor de procesos para ejecutar exactamente los mismos comandos usando el entorno virtual del proyecto:
+También puede usar directamente el intérprete del entorno virtual:
 
 ```powershell
-C:\ruta\a\MCP\.venv\Scripts\python.exe C:\ruta\a\MCP\servidor_mcp_sakila.py
-C:\ruta\a\MCP\.venv\Scripts\python.exe C:\ruta\a\MCP\servidor_mcp_ghibli_api.py
+.\.venv\Scripts\python.exe .\servidor_mcp_sakila.py
+.\.venv\Scripts\python.exe .\servidor_mcp_ghibli_api.py
 ```
 
-Tras modificar un servidor, reinicie el proceso o recargue la configuración MCP del cliente para que detecte las herramientas y docstrings actualizados.
+No hay un paso de compilación ni un comando de build definido en el proyecto.
+Después de modificar un servidor, reinicie el proceso iniciado por el cliente
+MCP.
 
-## 5. Uso y Ejemplos
+## 6. Tools de Sakila
 
-### Herramientas de Sakila
+### `obtener_esquema_bd()`
 
-`obtener_esquema_base_datos()` consulta `information_schema.columns` y devuelve un string JSON agrupado por tabla, con el nombre de cada columna y su tipo de dato. Es recomendable llamar primero a esta herramienta para que la IA conozca la estructura actual de la base de datos.
-
-`ejecutar_consulta_sql(consulta)` recibe SQL libre de solo lectura y devuelve un string JSON con una lista de diccionarios. Solo acepta consultas que comiencen por `SELECT`, ignorando espacios iniciales y mayúsculas/minúsculas. También rechaza comentarios, múltiples sentencias y operaciones como `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`, `GRANT`, `REVOKE`, `COPY`, `CALL`, `DO`, `VACUUM`, `SET` y `SHOW`.
+No recibe parámetros. Consulta `information_schema.columns` para el esquema
+`public` y devuelve un **string JSON** agrupado por tabla. Cada columna contiene
+`column_name` y `data_type`.
 
 Ejemplo:
 
 ```text
-obtener_esquema_base_datos()
+obtener_esquema_bd()
+```
 
-ejecutar_consulta_sql(
+### `ejecutar_consulta_select(consulta)`
+
+Recibe una consulta SQL como string y devuelve un **string JSON** con una lista
+de diccionarios. La consulta debe:
+
+- comenzar por `SELECT`, ignorando espacios y mayúsculas;
+- ser una única sentencia;
+- no contener comentarios `--` ni `/*`;
+- no contener `DROP`, `DELETE`, `UPDATE`, `INSERT`, `ALTER`, `CREATE`,
+  `TRUNCATE`, `GRANT`, `REVOKE`, `COPY`, `CALL`, `DO`, `VACUUM`, `SET` ni
+  `SHOW`.
+
+Se permite un punto y coma final, pero no múltiples sentencias. La tool no
+aplica un límite automático de filas; incluya `LIMIT` cuando corresponda.
+
+Ejemplo:
+
+```text
+ejecutar_consulta_select(
   "SELECT title, release_year, rating FROM film WHERE rating = 'PG' LIMIT 10"
 )
 ```
 
-No se aplica un límite automático de filas. Incluye un `LIMIT` apropiado para evitar respuestas demasiado grandes. Los errores de PostgreSQL se devuelven como string sin crashear el servidor.
+Los errores de validación y de PostgreSQL se devuelven como texto. La conexión
+se obtiene de un `ThreadedConnectionPool` con entre 1 y 10 conexiones.
 
-### Herramientas de Studio Ghibli
+## 7. Tools de Studio Ghibli
 
-Consulta flexible del catálogo completo:
+La API base está fijada en `https://ghibliapi.dev`. El catálogo resumido se
+descarga con los campos `id`, `title`, `original_title`, `director`,
+`release_date` y `rt_score`, y se conserva en memoria durante 300 segundos.
 
-```text
-query_ghibli_films(
-  min_score=0,
-  max_score=100,
-  sort_by="rt_score",
-  descending=False,
-  limit=10
-)
+### `query_ghibli_films(...)`
+
+Devuelve una lista de resúmenes con estos campos:
+
+```json
+[
+  {
+    "id": "uuid",
+    "title": "Film title",
+    "release_date": "2001",
+    "rotten_tomatoes_score": 95
+  }
+]
 ```
 
-`query_ghibli_films` funciona como una consulta de solo lectura sobre la tabla
-de películas: admite filtros por título, año y rango de `rt_score`, además de
-ordenamiento por `rt_score`, `release_date` o `title`. El catálogo se obtiene
-una vez y queda en caché durante cinco minutos; las consultas posteriores se
-resuelven en memoria.
+Parámetros:
 
-Buscar una película por título:
+| Parámetro | Tipo | Default | Restricciones y comportamiento |
+|---|---|---:|---|
+| `title_contains` | `str \| None` | `None` | Busca el texto en `title` u `original_title`; no puede ser vacío. |
+| `year` | `int \| None` | `None` | Entre 1980 y el año actual. |
+| `min_score` | `int \| None` | `None` | Entre 0 y 100. |
+| `max_score` | `int \| None` | `None` | Entre 0 y 100; no puede ser menor que `min_score`. |
+| `sort_by` | `str` | `"rt_score"` | Solo `rt_score`, `release_date` o `title`. |
+| `descending` | `bool` | `False` | Invierte el orden cuando es `True`. |
+| `limit` | `int` | `50` | Entre 1 y 250. |
+| `director` | `str \| None` | `None` | Filtra por coincidencia parcial; no puede ser vacío. |
 
-```text
-search_ghibli_films(query="Totoro")
-```
-
-Obtener detalles usando el UUID devuelto por la búsqueda:
-
-```text
-get_ghibli_film_details(
-  film_id="58611129-2dbc-4a81-a72f-77ddfc1b1b49"
-)
-```
-
-Filtrar por año y puntaje de Rotten Tomatoes:
+Ejemplos:
 
 ```text
-list_ghibli_films(year=2001, min_score=90)
+query_ghibli_films(title_contains="Totoro", limit=10)
+
+query_ghibli_films(year=2001, min_score=90)
+
+query_ghibli_films(sort_by="rt_score", descending=False, limit=5)
 ```
 
-Obtener las películas peor valoradas:
+### `get_ghibli_film_details(film_id)`
 
-```text
-get_worst_rated_ghibli_films(limit=5)
+Recibe `film_id` como string. Debe ser un UUID válido. Consulta
+`/films/{film_id}` y devuelve:
+
+```json
+{
+  "id": "uuid",
+  "title": "Film title",
+  "overview": "Original description",
+  "director": "Director",
+  "producer": "Producer",
+  "running_time_minutes": 119,
+  "original_title": "Original title",
+  "original_title_romanised": "Romanised title",
+  "url": "https://ghibliapi.dev/films/uuid",
+  "source_language": "en"
+}
 ```
 
-El ranking peor valorado usa `query_ghibli_films` con `sort_by="rt_score"` y
-orden ascendente. La API no ofrece ordenamiento ni filtrado nativo por ese
-campo, por lo que el servidor procesa el catálogo cacheado y no consulta los
-UUID de las películas individualmente.
+Un UUID inválido produce un error de validación. Una respuesta HTTP 404 se
+transforma en un error que indica que no se encontró la película. Los timeouts,
+errores de conexión y otros errores HTTP se transforman en errores controlados.
 
-Las sinopsis de Ghibli provienen en inglés. Las herramientas incluyen `source_language: "en"`; el cliente de IA debe presentar o resumir el contenido en español sin alterar fechas, puntajes, créditos ni títulos de origen.
+## 8. Límites y seguridad
 
-## 6. Decisiones de Diseño
+- La validación SQL es una defensa adicional; no sustituye los permisos de
+  PostgreSQL.
+- El usuario de PostgreSQL debe configurarse fuera del código y tener solo los
+  permisos requeridos.
+- El servidor Ghibli no implementa autenticación ni usa tokens en el código.
+- Las credenciales solo se leen desde `DB_PASSWORD` y `DB_USER`; no las incluya
+  en el código ni en el control de versiones.
+- Sakila no limita automáticamente el número de filas devueltas.
+- Ghibli usa un timeout HTTP de 10 segundos por solicitud.
 
-**Servidores separados.** Sakila y Ghibli se ejecutan de manera independiente para aislar dependencias, fallos y superficies de seguridad. Una indisponibilidad de la API externa no debe afectar la base local.
+## 9. Recursos, prompts y pruebas
 
-**Principio de mínimo privilegio.** El servidor Sakila no debe usar un administrador de PostgreSQL. Se diseñó para un usuario de solo lectura con acceso `SELECT` sobre las tablas que se quieran consultar. La validación del SQL es una defensa adicional, no un reemplazo de los permisos reales de la base.
+El proyecto no define resources ni prompts MCP adicionales.
 
-**Control de contexto y rendimiento.** Ghibli limita las búsquedas por título a 10 resultados y ambos servidores devuelven campos resumidos. En Sakila, el cliente debe incluir `LIMIT` en las consultas, porque la herramienta no impone un límite automático.
-
-El catálogo de películas se descarga una vez por TTL y se reutiliza para
-consultas, búsquedas y rankings; las llamadas a `/films/{id}` quedan reservadas
-para detalles explícitos de una película concreta.
-
-**Asincronía para la API externa.** Ghibli usa `httpx.AsyncClient` para evitar bloqueos durante solicitudes de red. También diferencia timeouts, errores de transporte, respuestas 404 y errores del proveedor.
-
-**Idioma de la fuente externa.** La API de Studio Ghibli no ofrece localización al español. Se preserva el dato original y se indica su idioma para que la capa conversacional pueda traducirlo de forma transparente.
+No hay una suite de pruebas ni un comando de prueba automatizado incluido. Para
+probarlo, inicie uno de los servidores desde su cliente MCP y verifique la
+tool correspondiente. La integración con MCP Inspector no está configurada en
+este repositorio; cualquier comando concreto depende de la versión de Inspector
+que se utilice.
