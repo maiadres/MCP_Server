@@ -5,6 +5,7 @@ import time
 from typing import Any, Literal
 import httpx
 from uuid import UUID
+from datetime import date
 from fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
@@ -163,8 +164,8 @@ async def query_ghibli_films(
     Para ver el director, la duración o la sinopsis, primero obtené el id aquí
     y después llamá a get_ghibli_film_details.
     """
-    if year is not None and not 1900 <= year <= 2100:
-        raise ValueError("year debe estar entre 1900 y 2100.")
+    if year is not None and not 1980 <= year <= date.today().year:
+        raise ValueError("year debe estar entre 1980 y el año actual.")
     if min_score is not None and not 0 <= min_score <= 100:
         raise ValueError("min_score debe estar entre 0 y 100.")
     if max_score is not None and not 0 <= max_score <= 100:
