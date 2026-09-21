@@ -15,8 +15,7 @@ MCP definidos en el código.
 
 ```text
 MCP/
-├── README.md
-├── .env                         # Configuración local; no debe publicarse
+├── README.md                         # Configuración local; no debe publicarse
 ├── .gitignore
 ├── servidor_mcp_sakila.py       # Servidor MCP para PostgreSQL/Sakila
 ├── servidor_mcp_ghibli_api.py   # Servidor MCP para Studio Ghibli
