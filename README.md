@@ -30,7 +30,7 @@ MCP/
 | Python | Implementación de los servidores. El código usa sintaxis de Python 3.10 o superior. |
 | FastMCP | Registro de las tools y ejecución del servidor MCP. |
 | PostgreSQL | Base de datos Sakila. |
-| psycopg2 | Driver y `ThreadedConnectionPool` para PostgreSQL. |
+| psycopg | Driver y `ConnectionPool` para PostgreSQL. |
 | httpx | Cliente HTTP asíncrono para la API de Studio Ghibli. |
 | python-dotenv | Carga de variables desde `.env`. |
 
@@ -54,7 +54,7 @@ En PowerShell:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install fastmcp httpx psycopg2-binary python-dotenv
+python -m pip install fastmcp httpx "psycopg[binary,pool]" python-dotenv
 ```
 
 Si PowerShell bloquea la activación para la sesión actual:
@@ -162,7 +162,7 @@ ejecutar_consulta_select(
 ```
 
 Los errores de validación y de PostgreSQL se devuelven como texto. La conexión
-se obtiene de un `ThreadedConnectionPool` con entre 1 y 10 conexiones.
+se obtiene de un `psycopg_pool.ConnectionPool` con entre 1 y 10 conexiones.
 
 ## 7. Tools de Studio Ghibli
 

@@ -4,8 +4,8 @@ import json
 import logging
 import os
 import re
-import psycopg2
-import psycopg2.pool
+import psycopg
+from psycopg_pool import ConnectionPool
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
@@ -24,15 +24,18 @@ if not DB_PASSWORD:
 
 DB_USER = os.getenv("DB_USER", "sakila_mcp_readonly")
 
-pool = psycopg2.pool.ThreadedConnectionPool(
-    minconn=1,
-    maxconn=10,
-    dbname="sakila",
-    user=DB_USER,
-    password=DB_PASSWORD,
-    host="localhost",
-    port="5434",
-    client_encoding="UTF-8",
+pool = ConnectionPool(
+    min_size=1,
+    max_size=10,
+    kwargs={
+        "dbname": "sakila",
+        "user": DB_USER,
+        "password": DB_PASSWORD,
+        "host": "localhost",
+        "port": "5434",
+        "client_encoding": "UTF-8",
+    },
+    open=True,
 )
 
 
@@ -59,29 +62,25 @@ def validar_consulta(query_sql: str) -> str:
 @mcp.tool()
 def obtener_esquema_bd() -> str:
     """Devuelve el esquema público de la base de datos agrupado por tabla."""
-    conexion = None
     try:
-        conexion = pool.getconn()
-        with conexion.cursor() as cursor:
-            cursor.execute(
-                "SELECT table_name, column_name, data_type "
-                "FROM information_schema.columns "
-                "WHERE table_schema = 'public';"
-            )
-
-            esquema: dict[str, list[dict[str, str]]] = {}
-            for nombre_tabla, nombre_columna, tipo_dato in cursor.fetchall():
-                esquema.setdefault(nombre_tabla, []).append(
-                    {"column_name": nombre_columna, "data_type": tipo_dato}
+        with pool.connection() as conexion:
+            with conexion.cursor() as cursor:
+                cursor.execute(
+                    "SELECT table_name, column_name, data_type "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = 'public';"
                 )
 
-            return json.dumps(esquema, ensure_ascii=False, default=str)
-    except psycopg2.Error as error:
+                esquema: dict[str, list[dict[str, str]]] = {}
+                for nombre_tabla, nombre_columna, tipo_dato in cursor.fetchall():
+                    esquema.setdefault(nombre_tabla, []).append(
+                        {"column_name": nombre_columna, "data_type": tipo_dato}
+                    )
+
+                return json.dumps(esquema, ensure_ascii=False, default=str)
+    except psycopg.Error as error:
         logger.exception("Error al obtener el esquema de la base de datos Sakila")
         return f"Error al obtener el esquema de la base de datos: {error}"
-    finally:
-        if conexion is not None:
-            pool.putconn(conexion)
 
 
 @mcp.tool()
@@ -92,31 +91,21 @@ def ejecutar_consulta_select(consulta: str) -> str:
     except ValueError as error:
         return f"Error de validación: {error}"
 
-    conexion = None
     try:
-        conexion = pool.getconn()
-        conexion.autocommit = True
-
-        with conexion.cursor() as cursor:
-            cursor.execute(consulta)
-            columnas = [columna[0] for columna in cursor.description]
-            filas = cursor.fetchall()
-            resultados = [dict(zip(columnas, fila)) for fila in filas]
-            return json.dumps(resultados, ensure_ascii=False, default=str)
-    except psycopg2.Error as error:
+        with pool.connection() as conexion:
+            with conexion.cursor() as cursor:
+                cursor.execute(consulta)
+                columnas = [columna[0] for columna in cursor.description]
+                filas = cursor.fetchall()
+                resultados = [dict(zip(columnas, fila)) for fila in filas]
+                return json.dumps(resultados, ensure_ascii=False, default=str)
+    except psycopg.Error as error:
         logger.exception("Error al ejecutar una consulta SQL de Sakila")
         return f"Error al ejecutar la consulta SQL: {error}"
-    finally:
-        if conexion is not None:
-            try:
-                conexion.rollback()
-            except psycopg2.Error:
-                logger.warning("No se pudo limpiar la conexión", exc_info=True)
-            pool.putconn(conexion)
 
 
 if __name__ == "__main__":
     try:
         mcp.run()
     finally:
-        pool.closeall()
+        pool.close()
