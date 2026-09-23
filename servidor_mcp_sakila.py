@@ -4,8 +4,6 @@ import json
 import logging
 import os
 import re
-from typing import Any
-
 import psycopg2
 import psycopg2.pool
 from dotenv import load_dotenv
