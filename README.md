@@ -8,8 +8,7 @@ Protocol (MCP)**:
 - **Sakila MCP** consulta una base PostgreSQL local.
 - **Studio Ghibli MCP** consulta el catálogo de películas mediante HTTP.
 
-Ambos servidores registran sus tools con FastMCP. No hay recursos ni prompts
-MCP definidos en el código.
+Ambos servidores registran sus tools con FastMCP.
 
 ## 2. Estructura del proyecto
 
@@ -24,9 +23,6 @@ MCP/
     ├── postgres-sakila-schema.sql
     └── postgres-sakila-insert-data.sql
 ```
-
-El entorno `.venv/` y los archivos de caché pueden existir localmente, pero
-están excluidos por `.gitignore`.
 
 ## 3. Tecnologías y transporte
 
@@ -50,9 +46,6 @@ proceso por `stdio`; este repositorio no implementa SSE ni Streamable HTTP.
 - Python compatible con la sintaxis usada por el código (3.10 o superior).
 - PostgreSQL con una base llamada `sakila`.
 - Un cliente compatible con MCP que pueda iniciar procesos Python.
-
-El repositorio no incluye `requirements.txt`, `pyproject.toml`, `package.json` ni
-otro manifiesto de versiones.
 
 ### Crear el entorno e instalar dependencias
 
@@ -129,7 +122,6 @@ También puede usar directamente el intérprete del entorno virtual:
 .\.venv\Scripts\python.exe .\servidor_mcp_ghibli_api.py
 ```
 
-No hay un paso de compilación ni un comando de build definido en el proyecto.
 Después de modificar un servidor, reinicie el proceso iniciado por el cliente
 MCP.
 
@@ -160,7 +152,7 @@ de diccionarios. La consulta debe:
   `SHOW`.
 
 Se permite un punto y coma final, pero no múltiples sentencias. La tool no
-aplica un límite automático de filas; incluya `LIMIT` cuando corresponda.
+aplica un límite automático de filas.
 
 Ejemplo:
 
@@ -181,7 +173,7 @@ descarga con los campos `id`, `title`, `original_title`, `director`,
 
 ### `query_ghibli_films(...)`
 
-Devuelve una lista de resúmenes con estos campos:
+Devuelve una lista con estos campos:
 
 ```json
 [
@@ -247,18 +239,9 @@ errores de conexión y otros errores HTTP se transforman en errores controlados.
   PostgreSQL.
 - El usuario de PostgreSQL debe configurarse fuera del código y tener solo los
   permisos requeridos.
-- El servidor Ghibli no implementa autenticación ni usa tokens en el código.
 - Las credenciales solo se leen desde `DB_PASSWORD` y `DB_USER`; no las incluya
   en el código ni en el control de versiones.
 - Sakila no limita automáticamente el número de filas devueltas.
 - Ghibli usa un timeout HTTP de 10 segundos por solicitud.
 
-## 9. Recursos, prompts y pruebas
 
-El proyecto no define resources ni prompts MCP adicionales.
-
-No hay una suite de pruebas ni un comando de prueba automatizado incluido. Para
-probarlo, inicie uno de los servidores desde su cliente MCP y verifique la
-tool correspondiente. La integración con MCP Inspector no está configurada en
-este repositorio; cualquier comando concreto depende de la versión de Inspector
-que se utilice.
