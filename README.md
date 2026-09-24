@@ -170,6 +170,21 @@ La API base está fijada en `https://ghibliapi.dev`. El catálogo resumido se
 descarga con los campos `id`, `title`, `original_title`, `director`,
 `release_date` y `rt_score`, y se conserva en memoria durante 300 segundos.
 
+### Cliente HTTP y ciclo de vida
+
+El servidor configura un `lifespan` con `@asynccontextmanager`. Al iniciar el
+servidor se crea una única instancia compartida de `httpx.AsyncClient`, que se
+reutiliza en las tools `query_ghibli_films` y `get_ghibli_film_details`.
+
+El cliente se obtiene mediante el `Context` de FastMCP y permanece asociado al
+estado del servidor durante toda su ejecución. Al finalizar el servidor, el
+context manager llama automáticamente a `aclose()` para liberar las
+conexiones HTTP. Esto evita crear y cerrar un cliente nuevo en cada solicitud.
+
+La caché del catálogo y su bloqueo de acceso también forman parte del estado
+del lifespan; por eso se comparten entre llamadas del mismo servidor sin usar
+variables globales mutables.
+
 ### `query_ghibli_films(...)`
 
 Devuelve una lista con estos campos:

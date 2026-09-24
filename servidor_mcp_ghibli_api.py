@@ -2,11 +2,15 @@
 
 import asyncio
 import time
-from typing import Any, Literal
-import httpx
-from uuid import UUID
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import date
-from fastmcp import FastMCP
+from typing import Any, Literal
+from uuid import UUID
+
+import httpx
+from fastmcp import Context, FastMCP
 
 # ---------------------------------------------------------------------------
 # Configuración del servidor MCP para Studio Ghibli
@@ -15,21 +19,51 @@ GHIBLI_API_BASE_URL = "https://ghibliapi.dev"
 SOURCE_LANGUAGE = "en"
 CACHE_TTL_SECONDS = 300
 
-mcp = FastMCP("Studio Ghibli Movie API")
 
-# Cache en memoria para evitar repetir la carga completa del catálogo.
-_catalogo_cache: list[dict[str, Any]] | None = None
-_catalogo_cache_expira_en = 0.0
-_catalogo_cache_lock = asyncio.Lock()
+@dataclass
+class ServerState:
+    """Recursos compartidos mientras el servidor MCP está activo."""
+
+    http_client: httpx.AsyncClient
+    catalogo_cache: list[dict[str, Any]] | None = None
+    catalogo_cache_expira_en: float = 0.0
+    catalogo_cache_lock: asyncio.Lock | None = None
 
 
-async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
+@asynccontextmanager
+async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+    """Crea los recursos del servidor y los libera al finalizar."""
+    async with httpx.AsyncClient(
+        base_url=GHIBLI_API_BASE_URL,
+        timeout=10.0,
+    ) as http_client:
+        state = ServerState(
+            http_client=http_client,
+            catalogo_cache_lock=asyncio.Lock(),
+        )
+        yield {"state": state}
+
+
+mcp = FastMCP("Studio Ghibli Movie API", lifespan=server_lifespan)
+
+
+def get_server_state(ctx: Context) -> ServerState:
+    """Obtiene el estado creado por el lifespan del servidor."""
+    state = ctx.lifespan_context.get("state")
+    if not isinstance(state, ServerState):
+        raise RuntimeError("El ciclo de vida del servidor no está disponible.")
+    return state
+
+
+async def ghibli_get(
+    client: httpx.AsyncClient,
+    endpoint: str,
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Obtiene datos de la API pública de Studio Ghibli."""
     try:
-        async with httpx.AsyncClient(base_url=GHIBLI_API_BASE_URL, timeout=10.0) as client:
-            response = await client.get(endpoint)
-            response.raise_for_status()
-            return response.json()
+        response = await client.get(endpoint)
+        response.raise_for_status()
+        return response.json()
     except httpx.TimeoutException as error:
         raise RuntimeError("La API de Studio Ghibli tardó demasiado en responder.") from error
     except httpx.HTTPStatusError as error:
@@ -45,26 +79,28 @@ async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-async def get_film_catalog() -> list[dict[str, Any]]:
+async def get_film_catalog(state: ServerState) -> list[dict[str, Any]]:
     """Devuelve el catálogo de películas en caché."""
-    global _catalogo_cache, _catalogo_cache_expira_en
 
     ahora = time.monotonic()
-    if _catalogo_cache is not None and ahora < _catalogo_cache_expira_en:
-        return _catalogo_cache
+    if state.catalogo_cache is not None and ahora < state.catalogo_cache_expira_en:
+        return state.catalogo_cache
 
     # Evita varias descargas simultáneas cuando la caché caduca.
-    async with _catalogo_cache_lock:
+    if state.catalogo_cache_lock is None:
+        raise RuntimeError("La caché del catálogo no está inicializada.")
+    async with state.catalogo_cache_lock:
         ahora = time.monotonic()
-        if _catalogo_cache is not None and ahora < _catalogo_cache_expira_en:
-            return _catalogo_cache
+        if state.catalogo_cache is not None and ahora < state.catalogo_cache_expira_en:
+            return state.catalogo_cache
 
         data = await ghibli_get(
+            state.http_client,
             "/films?fields=id,title,original_title,director,release_date,rt_score&limit=250"
         )
-        _catalogo_cache = data if isinstance(data, list) else []
-        _catalogo_cache_expira_en = time.monotonic() + CACHE_TTL_SECONDS
-        return _catalogo_cache
+        state.catalogo_cache = data if isinstance(data, list) else []
+        state.catalogo_cache_expira_en = time.monotonic() + CACHE_TTL_SECONDS
+        return state.catalogo_cache
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +157,13 @@ def filter_and_sort_films(
             continue
         if year is not None and film.get("release_date") != str(year):
             continue
-        if min_score is not None and (score in (None, "") or score_value < min_score):
+        
+        score_missing = score in (None, "")
+
+        if min_score is not None and (score_missing or score_value < min_score):
             continue
-        if max_score is not None and (score in (None, "") or score_value > max_score):
+
+        if max_score is not None and (score_missing or score_value > max_score):
             continue
         matches.append(film)
 
@@ -149,6 +189,7 @@ def filter_and_sort_films(
 
 @mcp.tool()
 async def query_ghibli_films(
+    ctx: Context,
     title_contains: str | None = None,
     year: int | None = None,
     min_score: int | None = None,
@@ -175,7 +216,8 @@ async def query_ghibli_films(
     if not 1 <= limit <= 250:
         raise ValueError("limit debe estar entre 1 y 250.")
 
-    films = await get_film_catalog()
+    state = get_server_state(ctx)
+    films = await get_film_catalog(state)
     return filter_and_sort_films(
         films,
         title_contains,
@@ -189,7 +231,10 @@ async def query_ghibli_films(
     )
 
 @mcp.tool()
-async def get_ghibli_film_details(film_id: str) -> dict[str, Any]:
+async def get_ghibli_film_details(
+    ctx: Context,
+    film_id: str,
+) -> dict[str, Any]:
     """Devuelve la ficha completa de una película a partir de su id.
 
     Usá esta herramienta después de query_ghibli_films para consultar la
@@ -200,7 +245,8 @@ async def get_ghibli_film_details(film_id: str) -> dict[str, Any]:
     except ValueError as error:
         raise ValueError("film_id debe ser un UUID válido devuelto por query_ghibli_films.") from error
 
-    data = await ghibli_get(f"/films/{film_id}")
+    state = get_server_state(ctx)
+    data = await ghibli_get(state.http_client, f"/films/{film_id}")
     film: dict[str, Any] = data if isinstance(data, dict) else {}
     return {
         "id": film.get("id"),
