@@ -126,6 +126,25 @@ def rt_score_value(film: dict[str, Any]) -> int | None:
         return None
 
 
+def _parse_release_year(value: object) -> int | None:
+    """Obtiene un año de un año numérico o una fecha ISO sin propagar errores."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 1 <= value <= 9999 else None
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if len(text) == 4 and text.isdigit():
+        year = int(text)
+        return year if year >= 1 else None
+    try:
+        return date.fromisoformat(text).year
+    except ValueError:
+        return None
+
+
 def filter_and_sort_films(
     films: list[dict[str, Any]],
     title_contains: str | None,
@@ -155,7 +174,8 @@ def filter_and_sort_films(
             continue
         if director_text and director_text not in str(film.get("director", "")).casefold():
             continue
-        if year is not None and film.get("release_date") != str(year):
+        release_year = _parse_release_year(film.get("release_date"))
+        if year is not None and release_year != year:
             continue
         
         if min_score is not None and (score_value is None or score_value < min_score):
@@ -171,10 +191,16 @@ def filter_and_sort_films(
         scored_films.sort(key=rt_score_value, reverse=descending)
         matches = scored_films + unscored_films
     elif sort_by == "release_date":
-        matches.sort(
-            key=lambda film: int(film.get("release_date", 0)),
+        dated_films = [
+            film for film in matches
+            if _parse_release_year(film.get("release_date")) is not None
+        ]
+        undated_films = [film for film in matches if film not in dated_films]
+        dated_films.sort(
+            key=lambda film: _parse_release_year(film.get("release_date")),
             reverse=descending,
         )
+        matches = dated_films + undated_films
     else:
         matches.sort(
             key=lambda film: str(film.get("title", "")).casefold(),
