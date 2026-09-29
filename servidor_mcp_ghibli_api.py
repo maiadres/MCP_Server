@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
@@ -31,7 +31,7 @@ class ServerState:
 
 
 @asynccontextmanager
-async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+async def server_lifespan(server: FastMCP) -> AsyncGenerator[dict[str, Any], None]:
     """Crea los recursos del servidor y los libera al finalizar."""
     async with httpx.AsyncClient(
         base_url=GHIBLI_API_BASE_URL,
@@ -199,7 +199,7 @@ async def query_ghibli_films(
     limit: int = 50,
     director: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Busca películas livianamente y devuelve id, título, año y puntuación.
+    """Busca películas devuelve id, título, año y puntuación.
 
     Usá esta herramienta para filtrar o comparar películas y obtener sus ids.
     Para ver el director, la duración o la sinopsis, primero obtené el id aquí
