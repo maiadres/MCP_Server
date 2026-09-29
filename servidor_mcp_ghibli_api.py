@@ -117,12 +117,13 @@ def summarize_film(film: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def rt_score_value(film: dict[str, Any]) -> int:
-    """Convierte el puntaje a entero para ordenar sin errores."""
+def rt_score_value(film: dict[str, Any]) -> int | None:
+    """Convierte el puntaje a entero o devuelve None si falta o no es válido."""
     try:
-        return int(film.get("rt_score", 0))
-    except (TypeError, ValueError):
-        return 0
+        score = film.get("rt_score")
+        return int(score) if score not in (None, "") else None
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def filter_and_sort_films(
@@ -148,7 +149,6 @@ def filter_and_sort_films(
     for film in films:
         title = str(film.get("title", ""))
         original_title = str(film.get("original_title", ""))
-        score = film.get("rt_score")
         score_value = rt_score_value(film)
 
         if text and text not in title.casefold() and text not in original_title.casefold():
@@ -158,17 +158,18 @@ def filter_and_sort_films(
         if year is not None and film.get("release_date") != str(year):
             continue
         
-        score_missing = score in (None, "")
-
-        if min_score is not None and (score_missing or score_value < min_score):
+        if min_score is not None and (score_value is None or score_value < min_score):
             continue
 
-        if max_score is not None and (score_missing or score_value > max_score):
+        if max_score is not None and (score_value is None or score_value > max_score):
             continue
         matches.append(film)
 
     if sort_by == "rt_score":
-        matches.sort(key=rt_score_value, reverse=descending)
+        scored_films = [film for film in matches if rt_score_value(film) is not None]
+        unscored_films = [film for film in matches if rt_score_value(film) is None]
+        scored_films.sort(key=rt_score_value, reverse=descending)
+        matches = scored_films + unscored_films
     elif sort_by == "release_date":
         matches.sort(
             key=lambda film: int(film.get("release_date", 0)),
@@ -204,6 +205,9 @@ async def query_ghibli_films(
     Usá esta herramienta para filtrar o comparar películas y obtener sus ids.
     Para ver el director, la duración o la sinopsis, primero obtené el id aquí
     y después llamá a get_ghibli_film_details.
+    Si se usa min_score o max_score, las películas sin una puntuación válida
+    quedan excluidas. Al ordenar por rt_score, las películas sin puntuación
+    aparecen siempre al final.
     """
     if year is not None and not 1980 <= year <= date.today().year:
         raise ValueError("year debe estar entre 1980 y el año actual.")
