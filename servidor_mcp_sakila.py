@@ -9,7 +9,7 @@ import psycopg
 from psycopg_pool import ConnectionPool
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from fastmcp.prompts import Message
+
 
 
 load_dotenv()
@@ -106,17 +106,63 @@ def ejecutar_consulta_select(consulta: str) -> str:
         logger.exception("Error al ejecutar una consulta SQL de Sakila")
         return f"Error al ejecutar la consulta SQL: {error}"
 
+@mcp.resource("politicas://01_clientes_gasto.md", mime_type="text/markdown")
+def leer_politica_clientes_gasto() -> str:
+    """Devuelve la política Markdown de clasificación por gasto."""
+    ruta = (
+        Path(__file__).resolve().parent
+        / "politicas"
+        / "md_llm"
+        / "01_clientes_gasto.md"
+    )
+    return ruta.read_text(encoding="utf-8")
 
-@mcp.resource("politicas://{nombre_archivo}", mime_type="text/markdown")
-def leer_politica(nombre_archivo: str) -> str:
-    """Devuelve el contenido Markdown de una politica local."""
-    if Path(nombre_archivo).name != nombre_archivo or Path(nombre_archivo).suffix != ".md":
-        raise ValueError("El recurso debe identificar un archivo .md local.")
 
-    ruta = Path(__file__).resolve().parent / "politicas" / "md_llm" / nombre_archivo
-    if not ruta.is_file():
-        raise FileNotFoundError(f"No se encontro la politica Markdown: {nombre_archivo}")
+@mcp.resource("politicas://00_indice.md", mime_type="text/markdown")
+def leer_indice_politicas() -> str:
+    """Devuelve el índice de las políticas Markdown disponibles."""
+    ruta = (
+        Path(__file__).resolve().parent
+        / "politicas"
+        / "md_llm"
+        / "00_indice.md"
+    )
+    return ruta.read_text(encoding="utf-8")
 
+
+@mcp.resource("politicas://02_clientes_frecuencia.md", mime_type="text/markdown")
+def leer_politica_clientes_frecuencia() -> str:
+    """Devuelve la política Markdown de clasificación por frecuencia."""
+    ruta = (
+        Path(__file__).resolve().parent
+        / "politicas"
+        / "md_llm"
+        / "02_clientes_frecuencia.md"
+    )
+    return ruta.read_text(encoding="utf-8")
+
+
+@mcp.resource("politicas://03_actores_reconocidos.md", mime_type="text/markdown")
+def leer_politica_actores_reconocidos() -> str:
+    """Devuelve la política Markdown de actores reconocidos."""
+    ruta = (
+        Path(__file__).resolve().parent
+        / "politicas"
+        / "md_llm"
+        / "03_actores_reconocidos.md"
+    )
+    return ruta.read_text(encoding="utf-8")
+
+
+@mcp.resource("politicas://04_descuentos.md", mime_type="text/markdown")
+def leer_politica_descuentos() -> str:
+    """Devuelve la política Markdown de descuentos."""
+    ruta = (
+        Path(__file__).resolve().parent
+        / "politicas"
+        / "md_llm"
+        / "04_descuentos.md"
+    )
     return ruta.read_text(encoding="utf-8")
 
 
@@ -159,8 +205,8 @@ def clasificar_actor(nombre_actor: str) -> str:
 
 @mcp.prompt()
 def clasificar_consumidor(
-    gasto_total: float | None = None,
-    frecuencia: int | None = None,
+    gasto_total: str | None = None,
+    frecuencia: str | None = None,
 ) -> str:
     """Genera instrucciones para clasificar un consumidor según gasto y frecuencia."""
     if gasto_total is None and frecuencia is None:
@@ -168,8 +214,10 @@ def clasificar_consumidor(
 
     instrucciones = []
     if gasto_total is not None:
+        gasto_total_numerico = float(gasto_total)
         instrucciones.append(
-            f"Clasifica el gasto total de USD {gasto_total:.2f} consultando "
+            f"Clasifica el gasto total de USD {gasto_total_numerico:.2f} "
+            "consultando "
             "`politicas://01_clientes_gasto.md`. Aplica los percentiles actuales "
             "de clientes activos: Destacado es el 10% superior, Bajo gasto el "
             "10% inferior y Regular el resto; mantén juntos los empates. No "
@@ -177,8 +225,10 @@ def clasificar_consumidor(
         )
 
     if frecuencia is not None:
+        frecuencia_numerica = int(frecuencia)
         instrucciones.append(
-            f"Clasifica la frecuencia de {frecuencia} alquileres consultando "
+            f"Clasifica la frecuencia de {frecuencia_numerica} alquileres "
+            "consultando "
             "estrictamente `politicas://02_clientes_frecuencia.md`. Aplica los "
             "percentiles actuales sobre la cantidad de alquileres de clientes "
             "activos: Frecuente es el 10% superior, Ocasional el 10% inferior "
