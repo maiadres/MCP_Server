@@ -4,10 +4,13 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 import psycopg
 from psycopg_pool import ConnectionPool
 from dotenv import load_dotenv
 from fastmcp import FastMCP
+from fastmcp.prompts import Message
+
 
 load_dotenv()
 
@@ -103,6 +106,105 @@ def ejecutar_consulta_select(consulta: str) -> str:
         logger.exception("Error al ejecutar una consulta SQL de Sakila")
         return f"Error al ejecutar la consulta SQL: {error}"
 
+
+@mcp.resource("politicas://{nombre_archivo}", mime_type="text/markdown")
+def leer_politica(nombre_archivo: str) -> str:
+    """Devuelve el contenido Markdown de una politica local."""
+    if Path(nombre_archivo).name != nombre_archivo or Path(nombre_archivo).suffix != ".md":
+        raise ValueError("El recurso debe identificar un archivo .md local.")
+
+    ruta = Path(__file__).resolve().parent / "politicas" / "md_llm" / nombre_archivo
+    if not ruta.is_file():
+        raise FileNotFoundError(f"No se encontro la politica Markdown: {nombre_archivo}")
+
+    return ruta.read_text(encoding="utf-8")
+
+
+# Los servidores MCP conectan agentes y LLMs con herramientas y recursos del sistema.
+# Estos prompts estandarizan las instrucciones para que las consultas a esas capacidades
+# y la aplicación de las políticas sean consistentes.
+@mcp.prompt()
+def consultar_descuentos() -> str:
+    """Genera instrucciones para determinar el descuento aplicable."""
+    return (
+        "Determina qué descuento corresponde a la situación o al cliente descrito "
+        "por el usuario. Primero consulta la política de descuentos en el recurso "
+        "`politicas://04_descuentos.md` y la política de clasificación por gasto "
+        "en `politicas://01_clientes_gasto.md`. Si hacen falta datos del cliente, "
+        "consúltalos con la herramienta `ejecutar_consulta_select`; no deduzcas "
+        "el segmento con umbrales históricos, porque la política vigente usa "
+        "percentiles de clientes activos. Asigna un único descuento según el "
+        "segmento actual: Destacado 10%, Regular 5% o Bajo gasto 20%. Los "
+        "descuentos no se acumulan. Explica el segmento, el descuento y el "
+        "fundamento; si faltan datos para decidir, indícalo en lugar de asumirlos."
+    )
+
+
+@mcp.prompt()
+def clasificar_actor(nombre_actor: str) -> str:
+    """Genera instrucciones para clasificar un actor según la política vigente."""
+    return (
+        f"Clasifica al actor {nombre_actor!r} según la política de actores "
+        "reconocidos del recurso `politicas://03_actores_reconocidos.md`. "
+        "Consulta los datos actuales con `ejecutar_consulta_select` y aplica "
+        "la métrica oficial de popularidad (alquileres de las películas en las "
+        "que participa), ordenando los empates por ingresos y luego por id del "
+        "actor. Usa los deciles definidos en la política: Estrella para el "
+        "decil 1, Conocido para los deciles 2 a 4 y Secundario para los deciles "
+        "5 a 10. Informa la categoría y la evidencia consultada; si no puedes "
+        "identificar al actor o no hay datos suficientes, explícalo sin inventar "
+        "una clasificación."
+    )
+
+
+@mcp.prompt()
+def clasificar_consumidor(
+    gasto_total: float | None = None,
+    frecuencia: int | None = None,
+) -> str:
+    """Genera instrucciones para clasificar un consumidor según gasto y frecuencia."""
+    if gasto_total is None and frecuencia is None:
+        raise ValueError("Debes proporcionar gasto_total, frecuencia o ambos.")
+
+    instrucciones = []
+    if gasto_total is not None:
+        instrucciones.append(
+            f"Clasifica el gasto total de USD {gasto_total:.2f} consultando "
+            "`politicas://01_clientes_gasto.md`. Aplica los percentiles actuales "
+            "de clientes activos: Destacado es el 10% superior, Bajo gasto el "
+            "10% inferior y Regular el resto; mantén juntos los empates. No "
+            "trates los rangos monetarios históricos como cortes vigentes."
+        )
+
+    if frecuencia is not None:
+        instrucciones.append(
+            f"Clasifica la frecuencia de {frecuencia} alquileres consultando "
+            "estrictamente `politicas://02_clientes_frecuencia.md`. Aplica los "
+            "percentiles actuales sobre la cantidad de alquileres de clientes "
+            "activos: Frecuente es el 10% superior, Ocasional el 10% inferior "
+            "y Regular el resto; mantén juntos los empates y no uses los rangos "
+            "observados como cortes vigentes."
+        )
+
+    instrucciones.append(
+        "Usa `ejecutar_consulta_select` para contrastar el dato proporcionado "
+        "con la distribución actual correspondiente."
+    )
+    if gasto_total is not None and frecuencia is not None:
+        instrucciones.append(
+            "Determina la categoría final combinando el segmento de gasto y "
+            "el nivel de frecuencia, y explica ambos resultados y la conclusión."
+        )
+    else:
+        instrucciones.append(
+            "Determina la clasificación usando únicamente el criterio "
+            "proporcionado y explica el resultado."
+        )
+    instrucciones.append(
+        "Si no puedes obtener los percentiles actuales, indícalo en lugar de "
+        "inventar una clasificación."
+    )
+    return " ".join(instrucciones)
 
 if __name__ == "__main__":
     try:
