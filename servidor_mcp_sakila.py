@@ -171,36 +171,35 @@ def leer_politica_descuentos() -> str:
 # y la aplicación de las políticas sean consistentes.
 @mcp.prompt()
 def consultar_descuentos() -> str:
-    """Consulta descuentos disponibles según el criterio elegido y la política vigente."""
+    """Consulta descuentos disponibles según el gasto y la política vigente."""
     return (
         "Tu propósito es consultar y ofrecer los tipos de descuentos disponibles "
         "según la política vigente, junto con ejemplos de clientes a quienes se "
-        "pueden aplicar. Antes de buscar, solicita explícitamente al usuario un "
-        "criterio si todavía no indicó uno. Presenta como opciones principales: "
-        "(a) Por Frecuencia, por ejemplo clientes frecuentes o recurrentes, y "
-        "(b) Por Gasto, por ejemplo monto total gastado o volumen de compras. "
-        "Si el usuario ya indicó un criterio, úsalo sin volver a preguntar.\n\n"
+        "pueden aplicar, usando exclusivamente el gasto como criterio. Si el "
+        "usuario todavía no indicó una consulta por gasto, solicita el monto "
+        "gastado o los clientes cuyo descuento desea consultar. No ofrezcas la "
+        "frecuencia como opción ni la uses para seleccionar, filtrar o clasificar "
+        "clientes. Si el usuario solicita consultar por frecuencia, explica que "
+        "los descuentos se determinan únicamente por gasto y pídele reformular "
+        "la consulta por gasto; no consultes la base de datos hasta tener ese "
+        "criterio.\n\n"
         "No leas ni invoques recursos MCP para responder. Obtén los datos actuales "
-        "con las herramientas: usa `ejecutar_consulta_select` para consultar "
-        "clientes activos y sus métricas; si necesitas confirmar tablas o columnas, "
-        "usa `obtener_esquema_bd`. Para Frecuencia, calcula la cantidad de alquileres "
-        "por cliente desde `rental`; para Gasto, calcula la suma de pagos por cliente "
-        "desde `payment`, incluyendo con valor cero a los clientes activos sin "
-        "pagos. Clasifica con los percentiles actuales de los clientes activos y "
-        "mantén juntos los empates. No uses como cortes vigentes los rangos "
-        "monetarios o de alquileres observados. No inventes clientes ni resultados.\n\n"
+        "con las herramientas: usa `ejecutar_consulta_select` para consultar el "
+        "gasto total de clientes activos; si necesitas confirmar tablas o columnas, "
+        "usa `obtener_esquema_bd`. Calcula la suma de pagos por cliente desde "
+        "`payment`, incluyendo con valor cero a los clientes activos sin pagos. "
+        "Clasifica con los percentiles actuales de gasto de los clientes activos "
+        "y mantén juntos los empates. No uses como cortes vigentes los rangos "
+        "monetarios observados. No consultes ni uses la frecuencia de alquileres. "
+        "No inventes clientes ni resultados.\n\n"
         "La política de descuentos asigna el porcentaje por segmento de gasto, no "
         "por frecuencia: Destacado recibe 10% (descuento por fidelidad), Regular "
-        "5% (descuento base) y Bajo gasto 20% (descuento incentivo). La frecuencia "
-        "sirve para seleccionar y clasificar clientes, pero no define por sí sola "
-        "otro porcentaje. Usa `ejecutar_consulta_select` también para obtener el "
-        "segmento de gasto de los clientes de ejemplo, ya que ese segmento determina "
-        "su descuento. Para el criterio elegido, informa únicamente los tipos de "
-        "descuento correspondientes a los clientes encontrados y muestra ejemplos "
-        "con la métrica que los incluye en el grupo, su segmento de gasto y el "
-        "descuento aplicable. No incluyas categorías ajenas al criterio ni acumules "
-        "descuentos. Si todavía no se indicó un criterio, espera la respuesta del "
-        "usuario antes de consultar la base de datos. Si las herramientas no "
+        "5% (descuento base) y Bajo gasto 20% (descuento incentivo). Usa "
+        "`ejecutar_consulta_select` también para obtener el segmento de gasto de "
+        "los clientes de ejemplo, ya que ese segmento determina su descuento. "
+        "Informa únicamente los tipos de descuento correspondientes a los clientes "
+        "encontrados y muestra ejemplos con el gasto total, su segmento de gasto y "
+        "el descuento aplicable. No acumules descuentos. Si las herramientas no "
         "permiten determinar un descuento, explica qué dato falta en vez de asumirlo."
     )
 
@@ -226,28 +225,71 @@ def clasificar_actor(nombre_actor: str) -> str:
 def clasificar_consumidor(
     gasto_total: str | None = None,
     frecuencia: str | None = None,
+    nombre_cliente: str | None = None,
 ) -> str:
-    """Genera instrucciones para clasificar un consumidor según gasto y frecuencia."""
-    if gasto_total is None and frecuencia is None:
-        raise ValueError("Debes proporcionar gasto_total, frecuencia o ambos.")
+    """Genera instrucciones para clasificar un consumidor según sus datos."""
+    if gasto_total is None and frecuencia is None and nombre_cliente is None:
+        return (
+            "Antes de consultar la base de datos, solicita al usuario al menos "
+            "uno de estos datos: el nombre del cliente para buscar y clasificar "
+            "sus métricas actuales, el gasto total para clasificar por gasto o "
+            "la cantidad de alquileres para clasificar por frecuencia. Si "
+            "proporciona solo el nombre, consulta y clasifica tanto su gasto "
+            "como su frecuencia. No inventes datos ni una clasificación."
+        )
 
     instrucciones = []
-    if gasto_total is not None:
-        gasto_total_numerico = float(gasto_total)
+    solo_nombre = (
+        nombre_cliente is not None
+        and gasto_total is None
+        and frecuencia is None
+    )
+    consultar_gasto = gasto_total is not None or solo_nombre
+    consultar_frecuencia = frecuencia is not None or solo_nombre
+
+    if nombre_cliente is not None:
         instrucciones.append(
-            f"Clasifica el gasto total de USD {gasto_total_numerico:.2f} "
-            "consultando "
+            f"Identifica al cliente {nombre_cliente!r} consultando la tabla "
+            "`customer` por `first_name` y `last_name`, sin distinguir "
+            "mayúsculas y minúsculas. Si hay varios resultados posibles, "
+            "solicita aclaración; no elijas uno arbitrariamente. Si no hay "
+            "coincidencia activa, indícalo sin clasificar. Limita las métricas "
+            "del cliente objetivo al `customer_id` encontrado, pero calcula los "
+            "percentiles sobre todos los clientes activos."
+        )
+
+    if consultar_gasto:
+        if gasto_total is not None:
+            gasto_total_numerico = float(gasto_total)
+            instruccion_gasto = (
+                f"Clasifica el gasto total de USD {gasto_total_numerico:.2f} "
+            )
+        else:
+            instruccion_gasto = (
+                "Obtén y clasifica el gasto total actual del cliente "
+            )
+        instrucciones.append(
+            instruccion_gasto
+            + "consultando "
             "`politicas://01_clientes_gasto.md`. Aplica los percentiles actuales "
             "de clientes activos: Destacado es el 10% superior, Bajo gasto el "
             "10% inferior y Regular el resto; mantén juntos los empates. No "
             "trates los rangos monetarios históricos como cortes vigentes."
         )
 
-    if frecuencia is not None:
-        frecuencia_numerica = int(frecuencia)
+    if consultar_frecuencia:
+        if frecuencia is not None:
+            frecuencia_numerica = int(frecuencia)
+            instruccion_frecuencia = (
+                f"Clasifica la frecuencia de {frecuencia_numerica} alquileres "
+            )
+        else:
+            instruccion_frecuencia = (
+                "Obtén y clasifica la frecuencia actual de alquileres del cliente "
+            )
         instrucciones.append(
-            f"Clasifica la frecuencia de {frecuencia_numerica} alquileres "
-            "consultando "
+            instruccion_frecuencia
+            + "consultando "
             "estrictamente `politicas://02_clientes_frecuencia.md`. Aplica los "
             "percentiles actuales sobre la cantidad de alquileres de clientes "
             "activos: Frecuente es el 10% superior, Ocasional el 10% inferior "
@@ -256,10 +298,11 @@ def clasificar_consumidor(
         )
 
     instrucciones.append(
-        "Usa `ejecutar_consulta_select` para contrastar el dato proporcionado "
-        "con la distribución actual correspondiente."
+        "Usa `ejecutar_consulta_select` para obtener las métricas solicitadas "
+        "y contrastar el dato proporcionado o consultado con la distribución "
+        "actual correspondiente."
     )
-    if gasto_total is not None and frecuencia is not None:
+    if consultar_gasto and consultar_frecuencia:
         instrucciones.append(
             "Determina la categoría final combinando el segmento de gasto y "
             "el nivel de frecuencia, y explica ambos resultados y la conclusión."
@@ -267,7 +310,7 @@ def clasificar_consumidor(
     else:
         instrucciones.append(
             "Determina la clasificación usando únicamente el criterio "
-            "proporcionado y explica el resultado."
+            "solicitado y explica el resultado."
         )
     instrucciones.append(
         "Si no puedes obtener los percentiles actuales, indícalo en lugar de "
