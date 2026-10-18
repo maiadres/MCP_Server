@@ -14,14 +14,32 @@ Ambos servidores registran sus tools con FastMCP.
 
 ```text
 MCP/
-├── README.md                         
+├── README.md
 ├── .gitignore
-├── servidor_mcp_sakila.py       # Servidor MCP para PostgreSQL/Sakila
-├── servidor_mcp_ghibli_api.py   # Servidor MCP para Studio Ghibli
+├── servidor_mcp_sakila.py              # Servidor MCP para PostgreSQL/Sakila
+├── servidor_mcp_ghibli_api.py           # Servidor MCP para Studio Ghibli
+├── politicas/
+│   ├── 00_indice.pdf                    # Índice de políticas, fuente PDF
+│   ├── 01_clientes_gasto.pdf
+│   ├── 02_clientes_frecuencia.pdf
+│   ├── 03_actores_reconocidos.pdf
+│   ├── 04_descuentos.pdf
+│   ├── convert_pdfs_to_md_llm.py        # Conversor opcional de PDF a Markdown
+│   └── md_llm/                          # Versiones Markdown expuestas como recursos
+│       ├── 00_indice.md
+│       ├── 01_clientes_gasto.md
+│       ├── 02_clientes_frecuencia.md
+│       ├── 03_actores_reconocidos.md
+│       └── 04_descuentos.md
 └── sakila/
-    ├── postgres-sakila-schema.sql
-    └── postgres-sakila-insert-data.sql
+    ├── postgres-sakila-schema.sql       # Esquema y objetos de Sakila
+    └── postgres-sakila-insert-data.sql  # Datos iniciales
 ```
+
+Los PDF son las fuentes de las políticas y los archivos `md_llm/` son sus
+versiones en Markdown. El servidor Sakila expone estas últimas; no convierte
+los PDF durante su ejecución. El archivo `.env` es local y no debe agregarse al
+control de versiones.
 
 ## 3. Tecnologías y transporte
 
@@ -33,6 +51,7 @@ MCP/
 | psycopg | Driver y `ConnectionPool` para PostgreSQL. |
 | httpx | Cliente HTTP asíncrono para la API de Studio Ghibli. |
 | python-dotenv | Carga de variables desde `.env`. |
+| MarkItDown | Dependencia opcional para regenerar los Markdown desde los PDF. |
 
 Los dos puntos de entrada llaman a `mcp.run()` sin especificar un transporte
 explícito. La ejecución está pensada para un cliente MCP que inicie cada
@@ -66,15 +85,33 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ### Cargar Sakila
 
-Cree o seleccione la base `sakila` y ejecute estos archivos SQL en orden:
+Cree la base `sakila` en la instancia local de PostgreSQL que escucha en el
+puerto `5434` y ejecute los archivos SQL en orden. Por ejemplo, con `psql` y
+un rol administrador:
 
-```text
-sakila/postgres-sakila-schema.sql
-sakila/postgres-sakila-insert-data.sql
+```powershell
+createdb -U postgres -p 5434 sakila
+psql -U postgres -p 5434 -d sakila -f .\sakila\postgres-sakila-schema.sql
+psql -U postgres -p 5434 -d sakila -f .\sakila\postgres-sakila-insert-data.sql
 ```
 
-El esquema SQL ya define tablas y vistas. No hay un paso separado de creación
-de vistas requerido por los servidores.
+El esquema SQL crea los objetos requeridos; no hay un paso separado de creación
+de vistas requerido por los servidores. Los scripts contienen sentencias de
+propiedad y permisos de PostgreSQL, por lo que la carga puede requerir un rol
+con privilegios administrativos. Adapte el comando si su instalación o sus
+credenciales son distintas.
+
+Para volver a generar los Markdown a partir de los PDF, de forma opcional,
+instale MarkItDown y ejecute el conversor:
+
+```powershell
+python -m pip install markitdown
+python .\politicas\convert_pdfs_to_md_llm.py .\politicas
+```
+
+El conversor busca PDF directamente en el directorio indicado y guarda los
+Markdown en `md_llm/`. Esta dependencia no es necesaria para ejecutar los
+servidores MCP si los Markdown existentes son suficientes.
 
 ### Variables de entorno
 
@@ -163,12 +200,70 @@ ejecutar_consulta_select(
 
 Los errores de validación y de PostgreSQL se devuelven como texto. La conexión
 se obtiene de un `psycopg_pool.ConnectionPool` con entre 1 y 10 conexiones.
+El filtro de la consulta es una validación adicional, no un analizador SQL
+completo ni una frontera de permisos. Mantenga las credenciales de la base con
+privilegios mínimos y no exponga la tool a usuarios no confiables sin controles
+adicionales. No se limita automáticamente el número de filas devueltas.
+
+### Recursos de políticas
+
+El servidor registra cinco recursos Markdown con MIME type `text/markdown`:
+
+| URI | Contenido |
+|---|---|
+| `politicas://00_indice.md` | Índice de políticas y guía de uso. |
+| `politicas://01_clientes_gasto.md` | Clasificación de clientes por gasto. |
+| `politicas://02_clientes_frecuencia.md` | Clasificación de clientes por frecuencia de alquiler. |
+| `politicas://03_actores_reconocidos.md` | Clasificación de actores por popularidad. |
+| `politicas://04_descuentos.md` | Descuentos según el segmento de gasto. |
+
+Los recursos entregan las reglas documentadas en `politicas/md_llm/`; por sí
+mismos no consultan la base ni calculan resultados actuales.
+
+### Políticas de negocio
+
+Las políticas definen reglas, no valores actuales. Para obtener nombres,
+montos, rankings y segmentos vigentes hay que consultar Sakila con
+`ejecutar_consulta_select`; los rangos que aparecen en los documentos son
+observaciones de la medición original, no umbrales permanentes.
+
+| Código | Regla |
+|---|---|
+| POL-01 | Para clientes activos, suma los pagos por cliente; quienes no tienen pagos cuentan con gasto cero. Destacado corresponde al 10% superior, Bajo gasto al 10% inferior y Regular al resto. Los empates se mantienen juntos, por lo que el porcentaje puede ser aproximado. |
+| POL-02 | Para clientes activos, cuenta sus filas de alquiler. Frecuente es el 10% superior, Ocasional el 10% inferior y Regular el resto; también se mantienen juntos los empates. |
+| POL-03 | La popularidad de un actor se mide por los alquileres de las películas en las que participa. Los empates se ordenan por ingresos y luego por ID. Estrella corresponde al decil 1, Conocido a los deciles 2–4 y Secundario a los deciles 5–10. Un alquiler cuenta completo para cada actor de la película. |
+| POL-04 | Asigna un único descuento por segmento de gasto: Destacado 10%, Regular 5% y Bajo gasto 20%. No se acumulan descuentos. La combinación Bajo gasto + Ocasional tiene prioridad de contacto, pero no un porcentaje adicional. |
+
+Las políticas aplican a clientes activos cuando así se indica y deben
+calcularse con los datos actuales antes de comunicar resultados o descuentos.
+
+### Prompts de Sakila
+
+El servidor registra tres prompts MCP. Proporcionan instrucciones a un cliente
+MCP/LLM; no ejecutan por sí solos las consultas ni aplican los descuentos:
+
+| Prompt | Parámetros | Propósito |
+|---|---|---|
+| `consultar_descuentos()` | Ninguno | Si falta el criterio, solicita elegir gasto o frecuencia. Indica consultar clientes activos y sus métricas, y asignar el porcentaje solo según el segmento de gasto. |
+| `clasificar_actor(nombre_actor)` | `nombre_actor: str` | Indica consultar la popularidad del actor, aplicar el desempate y los deciles de POL-03 e informar la evidencia sin inventar datos. |
+| `clasificar_consumidor(gasto_total=None, frecuencia=None)` | `gasto_total: str \| None`, `frecuencia: str \| None` | Requiere al menos un valor. Indica comparar gasto y/o alquileres con los percentiles actuales; si se pasan ambos, pide explicar ambas clasificaciones y la conclusión. |
+
+El prompt de descuentos guía la consulta con las tools SQL y especifica cómo
+seleccionar ejemplos, y pide expresamente no leer ni invocar recursos MCP. Los
+prompts de clasificación hacen referencia también a los recursos de políticas;
+el agente cliente debe invocar las tools y recursos indicados para obtener
+evidencia y reglas.
 
 ## 7. Tools de Studio Ghibli
 
 La API base está fijada en `https://ghibliapi.dev`. El catálogo resumido se
 descarga con los campos `id`, `title`, `original_title`, `director`,
 `release_date` y `rt_score`, y se conserva en memoria durante 300 segundos.
+El catálogo se solicita con un máximo de 250 películas. `query_ghibli_films`
+devuelve resúmenes y ordena las películas sin puntuación al final cuando se
+ordena por puntuación; `get_ghibli_film_details` obtiene la ficha completa
+desde la API. La API externa debe estar disponible para actualizar el catálogo
+y consultar detalles.
 
 ### Cliente HTTP y ciclo de vida
 
@@ -211,7 +306,13 @@ Parámetros:
 | `sort_by` | `str` | `"rt_score"` | Solo `rt_score`, `release_date` o `title`. |
 | `descending` | `bool` | `False` | Invierte el orden cuando es `True`. |
 | `limit` | `int` | `50` | Entre 1 y 250. |
-| `director` | `str \| None` | `None` | Filtra por coincidencia parcial; no puede ser vacío. |
+| `director` | `str \| None` | `None` | Filtra por coincidencia parcial, sin distinguir mayúsculas; no puede ser vacío. |
+
+La búsqueda de título también ignora mayúsculas. Si se establece un límite de
+puntuación, las películas sin puntuación válida quedan excluidas. Al ordenar
+por `rt_score`, las películas sin puntuación aparecen al final incluso cuando
+se invierte el orden. La ordenación por `release_date` utiliza el año de
+lanzamiento.
 
 Ejemplos:
 
@@ -257,5 +358,7 @@ errores de conexión y otros errores HTTP se transforman en errores controlados.
   en el código ni en el control de versiones.
 - Sakila no limita automáticamente el número de filas devueltas.
 - Ghibli usa un timeout HTTP de 10 segundos por solicitud.
-
-
+- La caché de Ghibli vive en memoria del proceso; se comparte entre sus
+  solicitudes y se pierde cuando se reinicia el servidor.
+- Los PDF de políticas y los archivos Sakila son material incluido en el
+  repositorio; el proyecto no instala ni inicia PostgreSQL automáticamente.

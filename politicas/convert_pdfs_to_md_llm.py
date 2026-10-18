@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-
+#Script realizado por el Profesor Cristian Pacifico
 def convert_with_python_api(pdf_path: Path) -> str:
     """Convert a PDF to markdown text using the markitdown Python API."""
     try:
