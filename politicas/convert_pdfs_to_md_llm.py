@@ -5,6 +5,7 @@ The script scans only the selected directory (non-recursive), preserving each
 input filename and changing only the extension to .md in a separate output
 subdirectory.
 """
+#Script realizado por el Profesor Cristian Pacifico
 
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-#Script realizado por el Profesor Cristian Pacifico
+
 def convert_with_python_api(pdf_path: Path) -> str:
     """Convert a PDF to markdown text using the markitdown Python API."""
     try:
