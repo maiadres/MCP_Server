@@ -170,37 +170,57 @@ def leer_politica_descuentos() -> str:
 # Estos prompts estandarizan las instrucciones para que las consultas a esas capacidades
 # y la aplicación de las políticas sean consistentes.
 @mcp.prompt()
-def consultar_descuentos() -> str:
-    """Consulta descuentos disponibles según el gasto y la política vigente."""
+def consultar_descuentos(
+    criterio: str = "gasto",
+    nombre_cliente: str | None = None,
+    gasto_total: str | None = None,
+) -> str:
+    """Consulta el descuento por gasto o por nombre del cliente según la política vigente."""
+    criterio_normalizado = (criterio or "").strip().lower()
+
+    if criterio_normalizado in {"nombre", "cliente", "por nombre", "por cliente"}:
+        if not nombre_cliente:
+            return (
+                "Solicita el nombre del cliente para consultar su descuento. "
+                "Si el usuario no lo indica, pide aclaración antes de consultar la base de datos. "
+                "No uses frecuencia ni otros criterios para determinar el descuento."
+            )
+
+        return (
+            f"Consulta el descuento del cliente {nombre_cliente!r} usando el gasto total como base. "
+            "Primero identifica al cliente en `customer` por `first_name` y `last_name` sin distinguir "
+            "mayúsculas y minúsculas; si hay varios resultados, pide aclaración antes de seguir. "
+            "Si no hay coincidencia activa, indica que no se puede determinar el descuento sin inventar datos. "
+            "Luego calcula el gasto total actual del cliente usando `payment`, incluyendo valor cero para clientes activos sin pagos. "
+            "Clasifica ese gasto según los percentiles actuales de clientes activos y mantiene unidos los empates; "
+            "no uses rangos históricos como cortes vigentes. "
+            "La política de descuentos asigna: Destacado 10% (fidelidad), Regular 5% (base) y Bajo gasto 20% (incentivo). "
+            "Informa solo el descuento aplicable al cliente encontrado, junto con su gasto total y el segmento correspondiente. "
+            "No ofrezcas descuentos por frecuencia ni los combines con otros criterios."
+        )
+
+    if criterio_normalizado in {"gasto", "gasto_total", "por gasto"}:
+        if gasto_total is not None:
+            return (
+                f"Clasifica el gasto total del cliente como USD {gasto_total} siguiendo la política vigente. "
+                "Consulta el gasto actual con `ejecutar_consulta_select` usando `payment` y toma en cuenta a los clientes activos sin pagos como valor cero. "
+                "Usa los percentiles actuales de gasto de los clientes activos para asignar el segmento, manteniendo juntos los empates y sin usar rangos históricos como cortes vigentes. "
+                "No consultes ni uses la frecuencia de alquileres. La política asigna: Destacado 10%, Regular 5% y Bajo gasto 20%. "
+                "Si no hay datos suficientes para clasificar, explica qué falta en vez de asumir un descuento."
+            )
+
+        return (
+            "El usuario quiere consultar el descuento por gasto. Solicita el monto gastado o "
+            "el nombre del cliente cuyo descuento desea consultar. Si menciona solo un nombre, identifica "
+            "al cliente y luego calcula su gasto total actual para aplicar la política. No uses la frecuencia como criterio, "
+            "ni consultes la base de datos hasta tener el dato requerido."
+        )
+
     return (
-        "Tu propósito es consultar y ofrecer los tipos de descuentos disponibles "
-        "según la política vigente, junto con ejemplos de clientes a quienes se "
-        "pueden aplicar, usando exclusivamente el gasto como criterio. Si el "
-        "usuario todavía no indicó una consulta por gasto, solicita el monto "
-        "gastado o los clientes cuyo descuento desea consultar. No ofrezcas la "
-        "frecuencia como opción ni la uses para seleccionar, filtrar o clasificar "
-        "clientes. Si el usuario solicita consultar por frecuencia, explica que "
-        "los descuentos se determinan únicamente por gasto y pídele reformular "
-        "la consulta por gasto; no consultes la base de datos hasta tener ese "
-        "criterio.\n\n"
-        "No leas ni invoques recursos MCP para responder. Obtén los datos actuales "
-        "con las herramientas: usa `ejecutar_consulta_select` para consultar el "
-        "gasto total de clientes activos; si necesitas confirmar tablas o columnas, "
-        "usa `obtener_esquema_bd`. Calcula la suma de pagos por cliente desde "
-        "`payment`, incluyendo con valor cero a los clientes activos sin pagos. "
-        "Clasifica con los percentiles actuales de gasto de los clientes activos "
-        "y mantén juntos los empates. No uses como cortes vigentes los rangos "
-        "monetarios observados. No consultes ni uses la frecuencia de alquileres. "
-        "No inventes clientes ni resultados.\n\n"
-        "La política de descuentos asigna el porcentaje por segmento de gasto, no "
-        "por frecuencia: Destacado recibe 10% (descuento por fidelidad), Regular "
-        "5% (descuento base) y Bajo gasto 20% (descuento incentivo). Usa "
-        "`ejecutar_consulta_select` también para obtener el segmento de gasto de "
-        "los clientes de ejemplo, ya que ese segmento determina su descuento. "
-        "Informa únicamente los tipos de descuento correspondientes a los clientes "
-        "encontrados y muestra ejemplos con el gasto total, su segmento de gasto y "
-        "el descuento aplicable. No acumules descuentos. Si las herramientas no "
-        "permiten determinar un descuento, explica qué dato falta en vez de asumirlo."
+        "Define primero si la consulta es por gasto o por nombre del cliente. "
+        "Si es por gasto, pide el monto y clasifica el segmento según la política vigente; "
+        "si es por nombre, identifica al cliente, calcula su gasto total actual y aplica el mismo criterio. "
+        "No consideres frecuencia ni otros descuentos; los descuentos se basan únicamente en el gasto total del cliente activo."
     )
 
 
@@ -228,14 +248,21 @@ def clasificar_consumidor(
     nombre_cliente: str | None = None,
 ) -> str:
     """Genera instrucciones para clasificar un consumidor según sus datos."""
+    if gasto_total is not None:
+        gasto_total = gasto_total.strip() or None
+    if frecuencia is not None:
+        frecuencia = frecuencia.strip() or None
+    if nombre_cliente is not None:
+        nombre_cliente = nombre_cliente.strip() or None
+
     if gasto_total is None and frecuencia is None and nombre_cliente is None:
         return (
-            "Antes de consultar la base de datos, solicita al usuario al menos "
-            "uno de estos datos: el nombre del cliente para buscar y clasificar "
-            "sus métricas actuales, el gasto total para clasificar por gasto o "
-            "la cantidad de alquileres para clasificar por frecuencia. Si "
-            "proporciona solo el nombre, consulta y clasifica tanto su gasto "
-            "como su frecuencia. No inventes datos ni una clasificación."
+            "No es necesario proporcionar los tres datos. Antes de consultar "
+            "la base de datos, solicita solo uno de estos datos para poder "
+            "clasificar: el nombre del cliente, su gasto total o la cantidad "
+            "de alquileres. Si proporciona solo el nombre, consulta y clasifica "
+            "tanto su gasto como su frecuencia. No solicites los otros datos "
+            "como requisito ni inventes datos o una clasificación."
         )
 
     instrucciones = []
@@ -298,9 +325,11 @@ def clasificar_consumidor(
         )
 
     instrucciones.append(
-        "Usa `ejecutar_consulta_select` para obtener las métricas solicitadas "
-        "y contrastar el dato proporcionado o consultado con la distribución "
-        "actual correspondiente."
+        "No es necesario que el usuario proporcione nombre, gasto y frecuencia "
+        "a la vez: trabaja con el criterio disponible y no solicites los datos "
+        "faltantes como requisito. Usa `ejecutar_consulta_select` para obtener "
+        "las métricas necesarias y contrastar el dato proporcionado o "
+        "consultado con la distribución actual correspondiente."
     )
     if consultar_gasto and consultar_frecuencia:
         instrucciones.append(

@@ -246,7 +246,7 @@ MCP/LLM; no ejecutan por sí solos las consultas ni aplican los descuentos:
 |---|---|---|
 | `consultar_descuentos()` | Ninguno | Consulta exclusivamente por gasto. Si se solicita una consulta por frecuencia, indica que los descuentos se determinan por gasto y pide reformular la consulta; asigna el porcentaje según el segmento de gasto. |
 | `clasificar_actor(nombre_actor)` | `nombre_actor: str` | Indica consultar la popularidad del actor, aplicar el desempate y los deciles de POL-03 e informar la evidencia sin inventar datos. |
-| `clasificar_consumidor(gasto_total=None, frecuencia=None, nombre_cliente=None)` | `gasto_total: str \| None`, `frecuencia: str \| None`, `nombre_cliente: str \| None` | Si no se proporciona ningún dato, pide nombre, gasto total o cantidad de alquileres. Con nombre, indica filtrar el cliente objetivo por nombre y consultar sus datos actuales; si solo se pasa el nombre, clasifica gasto y frecuencia. Calcula percentiles sobre todos los clientes activos. |
+| `clasificar_consumidor(gasto_total=None, frecuencia=None, nombre_cliente=None)` | `gasto_total: str \| None`, `frecuencia: str \| None`, `nombre_cliente: str \| None` | Trata parámetros vacíos o con solo espacios como no proporcionados. Si no se proporciona ningún dato, pide nombre, gasto total o cantidad de alquileres. Con nombre, indica filtrar el cliente objetivo por nombre y consultar sus datos actuales; si solo se pasa el nombre, clasifica gasto y frecuencia. Calcula percentiles sobre todos los clientes activos. |
 
 El prompt de descuentos guía la consulta con las tools SQL y especifica cómo
 seleccionar ejemplos, y pide expresamente no leer ni invocar recursos MCP. Los
