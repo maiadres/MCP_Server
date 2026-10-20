@@ -2,11 +2,15 @@
 
 import asyncio
 import time
-from typing import Any, Literal
-import httpx
-from uuid import UUID
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import date
-from fastmcp import FastMCP
+from typing import Any, Literal
+from uuid import UUID
+
+import httpx
+from fastmcp import Context, FastMCP
 
 # ---------------------------------------------------------------------------
 # Configuración del servidor MCP para Studio Ghibli
@@ -15,21 +19,51 @@ GHIBLI_API_BASE_URL = "https://ghibliapi.dev"
 SOURCE_LANGUAGE = "en"
 CACHE_TTL_SECONDS = 300
 
-mcp = FastMCP("Studio Ghibli Movie API")
 
-# Cache en memoria para evitar repetir la carga completa del catálogo.
-_catalogo_cache: list[dict[str, Any]] | None = None
-_catalogo_cache_expira_en = 0.0
-_catalogo_cache_lock = asyncio.Lock()
+@dataclass
+class ServerState:
+    """Recursos compartidos mientras el servidor MCP está activo."""
+
+    http_client: httpx.AsyncClient
+    catalogo_cache: list[dict[str, Any]] | None = None
+    catalogo_cache_expira_en: float = 0.0
+    catalogo_cache_lock: asyncio.Lock | None = None
 
 
-async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
+@asynccontextmanager
+async def server_lifespan(server: FastMCP) -> AsyncGenerator[dict[str, Any], None]:
+    """Crea los recursos del servidor y los libera al finalizar."""
+    async with httpx.AsyncClient(
+        base_url=GHIBLI_API_BASE_URL,
+        timeout=10.0,
+    ) as http_client:
+        state = ServerState(
+            http_client=http_client,
+            catalogo_cache_lock=asyncio.Lock(),
+        )
+        yield {"state": state}
+
+
+mcp = FastMCP("Studio Ghibli Movie API", lifespan=server_lifespan)
+
+
+def get_server_state(ctx: Context) -> ServerState:
+    """Obtiene el estado creado por el lifespan del servidor."""
+    state = ctx.lifespan_context.get("state")
+    if not isinstance(state, ServerState):
+        raise RuntimeError("El ciclo de vida del servidor no está disponible.")
+    return state
+
+
+async def ghibli_get(
+    client: httpx.AsyncClient,
+    endpoint: str,
+) -> dict[str, Any] | list[dict[str, Any]]:
     """Obtiene datos de la API pública de Studio Ghibli."""
     try:
-        async with httpx.AsyncClient(base_url=GHIBLI_API_BASE_URL, timeout=10.0) as client:
-            response = await client.get(endpoint)
-            response.raise_for_status()
-            return response.json()
+        response = await client.get(endpoint)
+        response.raise_for_status()
+        return response.json()
     except httpx.TimeoutException as error:
         raise RuntimeError("La API de Studio Ghibli tardó demasiado en responder.") from error
     except httpx.HTTPStatusError as error:
@@ -45,26 +79,28 @@ async def ghibli_get(endpoint: str) -> dict[str, Any] | list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-async def get_film_catalog() -> list[dict[str, Any]]:
+async def get_film_catalog(state: ServerState) -> list[dict[str, Any]]:
     """Devuelve el catálogo de películas en caché."""
-    global _catalogo_cache, _catalogo_cache_expira_en
 
     ahora = time.monotonic()
-    if _catalogo_cache is not None and ahora < _catalogo_cache_expira_en:
-        return _catalogo_cache
+    if state.catalogo_cache is not None and ahora < state.catalogo_cache_expira_en:
+        return state.catalogo_cache
 
     # Evita varias descargas simultáneas cuando la caché caduca.
-    async with _catalogo_cache_lock:
+    if state.catalogo_cache_lock is None:
+        raise RuntimeError("La caché del catálogo no está inicializada.")
+    async with state.catalogo_cache_lock:
         ahora = time.monotonic()
-        if _catalogo_cache is not None and ahora < _catalogo_cache_expira_en:
-            return _catalogo_cache
+        if state.catalogo_cache is not None and ahora < state.catalogo_cache_expira_en:
+            return state.catalogo_cache
 
         data = await ghibli_get(
+            state.http_client,
             "/films?fields=id,title,original_title,director,release_date,rt_score&limit=250"
         )
-        _catalogo_cache = data if isinstance(data, list) else []
-        _catalogo_cache_expira_en = time.monotonic() + CACHE_TTL_SECONDS
-        return _catalogo_cache
+        state.catalogo_cache = data if isinstance(data, list) else []
+        state.catalogo_cache_expira_en = time.monotonic() + CACHE_TTL_SECONDS
+        return state.catalogo_cache
 
 
 # ---------------------------------------------------------------------------
@@ -81,12 +117,32 @@ def summarize_film(film: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def rt_score_value(film: dict[str, Any]) -> int:
-    """Convierte el puntaje a entero para ordenar sin errores."""
+def rt_score_value(film: dict[str, Any]) -> int | None:
+    """Convierte el puntaje a entero o devuelve None si falta o no es válido."""
     try:
-        return int(film.get("rt_score", 0))
-    except (TypeError, ValueError):
-        return 0
+        score = film.get("rt_score")
+        return int(score) if score not in (None, "") else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _parse_release_year(value: object) -> int | None:
+    """Obtiene un año de un año numérico o una fecha ISO sin propagar errores."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 1 <= value <= 9999 else None
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if len(text) == 4 and text.isdigit():
+        year = int(text)
+        return year if year >= 1 else None
+    try:
+        return date.fromisoformat(text).year
+    except ValueError:
+        return None
 
 
 def filter_and_sort_films(
@@ -112,28 +168,39 @@ def filter_and_sort_films(
     for film in films:
         title = str(film.get("title", ""))
         original_title = str(film.get("original_title", ""))
-        score = film.get("rt_score")
         score_value = rt_score_value(film)
 
         if text and text not in title.casefold() and text not in original_title.casefold():
             continue
         if director_text and director_text not in str(film.get("director", "")).casefold():
             continue
-        if year is not None and film.get("release_date") != str(year):
+        release_year = _parse_release_year(film.get("release_date"))
+        if year is not None and release_year != year:
             continue
-        if min_score is not None and (score in (None, "") or score_value < min_score):
+        
+        if min_score is not None and (score_value is None or score_value < min_score):
             continue
-        if max_score is not None and (score in (None, "") or score_value > max_score):
+
+        if max_score is not None and (score_value is None or score_value > max_score):
             continue
         matches.append(film)
 
     if sort_by == "rt_score":
-        matches.sort(key=rt_score_value, reverse=descending)
+        scored_films = [film for film in matches if rt_score_value(film) is not None]
+        unscored_films = [film for film in matches if rt_score_value(film) is None]
+        scored_films.sort(key=rt_score_value, reverse=descending)
+        matches = scored_films + unscored_films
     elif sort_by == "release_date":
-        matches.sort(
-            key=lambda film: int(film.get("release_date", 0)),
+        dated_films = [
+            film for film in matches
+            if _parse_release_year(film.get("release_date")) is not None
+        ]
+        undated_films = [film for film in matches if film not in dated_films]
+        dated_films.sort(
+            key=lambda film: _parse_release_year(film.get("release_date")),
             reverse=descending,
         )
+        matches = dated_films + undated_films
     else:
         matches.sort(
             key=lambda film: str(film.get("title", "")).casefold(),
@@ -149,6 +216,7 @@ def filter_and_sort_films(
 
 @mcp.tool()
 async def query_ghibli_films(
+    ctx: Context,
     title_contains: str | None = None,
     year: int | None = None,
     min_score: int | None = None,
@@ -158,11 +226,14 @@ async def query_ghibli_films(
     limit: int = 50,
     director: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Busca películas livianamente y devuelve id, título, año y puntuación.
+    """Busca películas devuelve id, título, año y puntuación.
 
     Usá esta herramienta para filtrar o comparar películas y obtener sus ids.
     Para ver el director, la duración o la sinopsis, primero obtené el id aquí
     y después llamá a get_ghibli_film_details.
+    Si se usa min_score o max_score, las películas sin una puntuación válida
+    quedan excluidas. Al ordenar por rt_score, las películas sin puntuación
+    aparecen siempre al final.
     """
     if year is not None and not 1980 <= year <= date.today().year:
         raise ValueError("year debe estar entre 1980 y el año actual.")
@@ -175,7 +246,8 @@ async def query_ghibli_films(
     if not 1 <= limit <= 250:
         raise ValueError("limit debe estar entre 1 y 250.")
 
-    films = await get_film_catalog()
+    state = get_server_state(ctx)
+    films = await get_film_catalog(state)
     return filter_and_sort_films(
         films,
         title_contains,
@@ -189,7 +261,10 @@ async def query_ghibli_films(
     )
 
 @mcp.tool()
-async def get_ghibli_film_details(film_id: str) -> dict[str, Any]:
+async def get_ghibli_film_details(
+    ctx: Context,
+    film_id: str,
+) -> dict[str, Any]:
     """Devuelve la ficha completa de una película a partir de su id.
 
     Usá esta herramienta después de query_ghibli_films para consultar la
@@ -200,7 +275,8 @@ async def get_ghibli_film_details(film_id: str) -> dict[str, Any]:
     except ValueError as error:
         raise ValueError("film_id debe ser un UUID válido devuelto por query_ghibli_films.") from error
 
-    data = await ghibli_get(f"/films/{film_id}")
+    state = get_server_state(ctx)
+    data = await ghibli_get(state.http_client, f"/films/{film_id}")
     film: dict[str, Any] = data if isinstance(data, dict) else {}
     return {
         "id": film.get("id"),
