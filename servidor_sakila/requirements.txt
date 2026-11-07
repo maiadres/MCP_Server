@@ -1,0 +1,4 @@
+fastmcp
+psycopg[binary]
+psycopg-pool
+python-dotenv

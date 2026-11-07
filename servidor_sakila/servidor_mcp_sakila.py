@@ -21,21 +21,21 @@ load_dotenv()
 mcp = FastMCP("Sakila MCP Server")
 logger = logging.getLogger(__name__)
 
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-if not DB_PASSWORD:
-    raise ValueError("La variable de entorno DB_PASSWORD es obligatoria.")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+if not POSTGRES_PASSWORD:
+    raise ValueError("La variable de entorno POSTGRES_PASSWORD es obligatoria.")
 
-DB_USER = os.getenv("DB_USER", "sakila_mcp_readonly")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "sakila_mcp_readonly")
 
 pool = ConnectionPool(
     min_size=1,
     max_size=10,
     kwargs={
-        "dbname": "sakila",
-        "user": DB_USER,
-        "password": DB_PASSWORD,
-        "host": "localhost",
-        "port": "5434",
+        "dbname": os.getenv("DB_NAME", "sakila"),
+        "user": POSTGRES_USER,
+        "password": POSTGRES_PASSWORD,
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": os.getenv("DB_PORT", "5434"),
         "client_encoding": "UTF-8",
     },
     open=True,
