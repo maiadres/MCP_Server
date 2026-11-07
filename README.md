@@ -43,7 +43,7 @@ Sakila expone estas últimas; no convierte los PDF durante su ejecución.
 
 | Tecnología | Uso |
 |---|---|
-| Python | Implementación de los servidores. El código usa sintaxis de Python 3.11.9. |
+| Python | Implementación de los servidores. El código requiere Python 3.11 o superior. |
 | FastMCP | Registro de las tools y ejecución del servidor MCP. |
 | PostgreSQL | Base de datos Sakila. |
 | psycopg | Driver y `ConnectionPool` para PostgreSQL. |
@@ -124,6 +124,9 @@ recibe esas credenciales de solo lectura como `POSTGRES_USER` y
 `POSTGRES_PASSWORD`; dentro de Compose, se conecta a `postgres:5432`. El
 healthcheck y el comando de verificación del Compose usan el nombre `postgres`,
 que es el valor de `POSTGRES_USER` del archivo de ejemplo.
+Dentro del contenedor `sakila_server`, `POSTGRES_USER` y `POSTGRES_PASSWORD`
+son las credenciales de solo lectura (`DB_USER` y `DB_PASSWORD`), no las del
+superusuario: el código del servidor lee esos nombres de variables.
 
 ### Carga de la base
 
