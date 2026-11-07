@@ -9,13 +9,14 @@ Protocol (MCP)**:
   de Docker Compose.
 - **Studio Ghibli MCP** consulta el catálogo de películas mediante HTTP.
 
-Ambos servidores registran sus tools con FastMCP.
+Ambos servidores registran sus primitivas con FastMCP.
 
 ## 2. Estructura del proyecto
 
 ```text
 MCP/
 ├── README.md
+├── mcp-config.json
 ├── .gitignore
 ├── .env.example                         # Variables para Docker Compose
 ├── docker-compose.yml
