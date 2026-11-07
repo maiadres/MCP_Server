@@ -35,7 +35,7 @@ MCP/
         └── 03-usuario-mcp.sh
 ```
 
-Los PDF son las fuentes de las políticas y los archivos
+Los PDF son las fuentes de las políticas de sakila y los archivos
 `servidor_sakila/politicas/md_llm/` son sus versiones en Markdown. El servidor
 Sakila expone estas últimas; no convierte los PDF durante su ejecución.
 
@@ -43,7 +43,7 @@ Sakila expone estas últimas; no convierte los PDF durante su ejecución.
 
 | Tecnología | Uso |
 |---|---|
-| Python | Implementación de los servidores. El código usa sintaxis de Python 3.10 o superior. |
+| Python | Implementación de los servidores. El código usa sintaxis de Python 3.11.9. |
 | FastMCP | Registro de las tools y ejecución del servidor MCP. |
 | PostgreSQL | Base de datos Sakila. |
 | psycopg | Driver y `ConnectionPool` para PostgreSQL. |
@@ -73,9 +73,9 @@ docker compose version
 ```
 
 El servidor Sakila consulta la base PostgreSQL `sakila` y ofrece herramientas
-de consulta de solo lectura, además de recursos y prompts con políticas. El
+de consulta de solo lectura, además de recursos y prompts. El
 servidor Studio Ghibli consulta la API pública de películas: permite buscar y
-filtrar el catálogo, y obtener los detalles de una película.
+filtrar el catálogo, y obtener los detalles de las películas.
 
 Para ejecutar los servidores directamente con Python, de forma opcional,
 instale las dependencias desde la raíz del proyecto:
@@ -87,8 +87,7 @@ python -m pip install -r .\servidor_sakila\requirements.txt
 python -m pip install -r .\servidor_ghibli\requirements.txt
 ```
 
-La sintaxis del código requiere Python 3.10 o superior. La ejecución directa
-del servidor Sakila también requiere una base accesible y las variables de
+La ejecución directa del servidor Sakila también requiere una base accesible y las variables de
 conexión correspondientes.
 
 Para regenerar opcionalmente los Markdown de políticas a partir de sus PDF,
@@ -103,10 +102,6 @@ Esta dependencia no es necesaria para ejecutar los servidores si los Markdown
 existentes son suficientes.
 
 ### Variables de entorno
-
-Copie `.env.example` a `.env` en la raíz del proyecto antes de iniciar los
-contenedores. El archivo contiene las credenciales de PostgreSQL y del rol de
-solo lectura:
 
 ```env
 POSTGRES_USER=postgres
@@ -137,8 +132,7 @@ Al inicializar un volumen de datos vacío, PostgreSQL ejecuta los archivos de
 crea el esquema, `02-postgres-sakila-insert-data.sql` carga los datos y
 `03-usuario-mcp.sh` crea el usuario de solo lectura. Los scripts de
 `/docker-entrypoint-initdb.d` solo se ejecutan cuando el directorio de datos
-está vacío; cambiar los archivos o las variables no vuelve a inicializar un
-volumen existente.
+está vacío.
 
 ### Puesta en marcha
 
@@ -185,9 +179,8 @@ volumen existente.
    docker compose run --rm -T ghibli_server
    ```
 
-   El proceso usa `stdio`; normalmente lo inicia y mantiene conectado el
-   cliente MCP, en lugar de una terminal interactiva.
-
+   El proceso usa `stdio`;
+   
 ### Configuración del cliente MCP (`stdio`)
 
 Agregue la configuración al archivo MCP que use el cliente; el formato y la
@@ -496,5 +489,4 @@ errores de conexión y otros errores HTTP se transforman en errores controlados.
 - La caché de Ghibli vive en memoria del proceso; se comparte entre sus
   solicitudes y se pierde cuando se reinicia el servidor.
 - Los PDF de políticas y los archivos Sakila son material incluido en el
-  repositorio. Docker Compose inicia PostgreSQL y ejecuta los SQL al inicializar
-  un volumen vacío.
+  repositorio. 
