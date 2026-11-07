@@ -37,8 +37,7 @@ MCP/
 
 Los PDF son las fuentes de las políticas y los archivos
 `servidor_sakila/politicas/md_llm/` son sus versiones en Markdown. El servidor
-Sakila expone estas últimas; no convierte los PDF durante su ejecución. El
-archivo `.env` es local y no debe agregarse al control de versiones.
+Sakila expone estas últimas; no convierte los PDF durante su ejecución.
 
 ## 3. Tecnologías y transporte
 
