@@ -5,47 +5,120 @@
 Este proyecto contiene dos servidores independientes basados en **Model Context
 Protocol (MCP)**:
 
-- **Sakila MCP** consulta una base PostgreSQL local.
+- **Sakila MCP** consulta la base PostgreSQL `sakila` del servicio `postgres`
+  de Docker Compose.
 - **Studio Ghibli MCP** consulta el catálogo de películas mediante HTTP.
 
-Ambos servidores registran sus tools con FastMCP.
+Ambos servidores registran sus primitivas con FastMCP.
+
+## Inicio rápido
+
+1. Instala Docker Desktop para Windows o Mac, ábrelo y comprueba que Docker
+   Compose esté disponible:
+
+   ```sh
+   docker --version
+   docker compose version
+   ```
+
+2. Clona el repositorio y entra en su carpeta. Si necesitas una rama distinta
+   de la predeterminada, usa el comando alternativo:
+
+   ```sh
+   git clone https://github.com/maiadres/MCP_Server.git
+   # Alternativa: git clone -b <rama> https://github.com/maiadres/MCP_Server.git
+   cd MCP_Server
+   ```
+
+3. Crea el archivo `.env` desde el ejemplo. Inventa las dos contraseñas y
+   reemplaza los valores de ejemplo; ninguna variable puede quedar vacía:
+
+   ```text
+   Windows: copy .env.example .env
+   Mac/Linux: cp .env.example .env
+   ```
+
+4. Construye las imágenes de los servidores:
+
+   ```sh
+   docker compose build
+   ```
+
+5. Inicia PostgreSQL. La primera carga de la base tarda uno o dos minutos.
+   Sigue los registros y espera al segundo mensaje `ready to accept
+   connections`; el primero aparece antes de que terminen los scripts de
+   inicialización:
+
+   ```sh
+   docker compose up -d postgres
+   docker compose logs -f postgres
+   ```
+
+6. Comprueba que se haya creado el rol de solo lectura y que Sakila tenga sus
+   datos. El resultado debe ser `200`:
+
+   ```sh
+   docker compose exec postgres psql -U sakila_mcp_readonly -d sakila -c "SELECT count(*) FROM actor;"
+   ```
+
+7. Prueba los servidores por separado. Quedarán esperando la comunicación MCP;
+   sal de cada proceso con `Ctrl+C`:
+
+   ```sh
+   docker compose run --rm -T sakila_server
+   docker compose run --rm -T ghibli_server
+   ```
+
+8. Abre [mcp-config.json](./mcp-config.json), reemplaza `RUTA/AL/PROYECTO` en
+   la configuración por la ruta real del proyecto y luego reinicia por
+   completo tu cliente MCP. En Windows usa `/` como separador; en Mac/Linux,
+   ejecuta `pwd` dentro de la carpeta del proyecto y copia su resultado:
+
+   ```text
+   Windows: C:/ruta/real/al/proyecto
+   Mac/Linux: (resultado de pwd dentro de la carpeta del proyecto)
+   ```
+
+9. Pídele al cliente MCP que responda estas dos preguntas:
+
+   ```text
+   "Lista 5 películas de Ghibli"
+   "Dame 5 actores de Sakila"
+   ```
 
 ## 2. Estructura del proyecto
 
 ```text
 MCP/
 ├── README.md
+├── mcp-config.json
 ├── .gitignore
-├── servidor_mcp_sakila.py              # Servidor MCP para PostgreSQL/Sakila
-├── servidor_mcp_ghibli_api.py           # Servidor MCP para Studio Ghibli
-├── politicas/
-│   ├── 00_indice.pdf                    # Índice de políticas, fuente PDF
-│   ├── 01_clientes_gasto.pdf
-│   ├── 02_clientes_frecuencia.pdf
-│   ├── 03_actores_reconocidos.pdf
-│   ├── 04_descuentos.pdf
-│   ├── convert_pdfs_to_md_llm.py        # Conversor opcional de PDF a Markdown
-│   └── md_llm/                          # Versiones Markdown expuestas como recursos
-│       ├── 00_indice.md
-│       ├── 01_clientes_gasto.md
-│       ├── 02_clientes_frecuencia.md
-│       ├── 03_actores_reconocidos.md
-│       └── 04_descuentos.md
-└── sakila/
-    ├── postgres-sakila-schema.sql       # Esquema y objetos de Sakila
-    └── postgres-sakila-insert-data.sql  # Datos iniciales
+├── .env.example                         # Variables para Docker Compose
+├── docker-compose.yml
+├── servidor_ghibli/
+│   ├── Dockerfile
+│   ├── requirements.txt
+│   └── servidor_mcp_ghibli_api.py
+└── servidor_sakila/
+    ├── Dockerfile
+    ├── requirements.txt
+    ├── servidor_mcp_sakila.py
+    ├── politicas/                       # Políticas y recursos Markdown
+    └── sakila/
+        ├── 01-postgres-sakila-schema.sql
+        ├── 02-postgres-sakila-insert-data.sql
+        └── 03-usuario-mcp.sh
 ```
 
-Los PDF son las fuentes de las políticas y los archivos `md_llm/` son sus
-versiones en Markdown. El servidor Sakila expone estas últimas; no convierte
-los PDF durante su ejecución. El archivo `.env` es local y no debe agregarse al
-control de versiones.
+Los PDF son las fuentes de las políticas de sakila y los archivos
+`servidor_sakila/politicas/md_llm/` son sus versiones en Markdown. El servidor
+Sakila expone estas últimas; no convierte los PDF durante su ejecución.
 
 ## 3. Tecnologías y transporte
 
 | Tecnología | Uso |
 |---|---|
-| Python | Implementación de los servidores. El código usa sintaxis de Python 3.10 o superior. |
+| Python | Implementación de los servidores. El código requiere Python 3.11 o superior. |
 | FastMCP | Registro de las tools y ejecución del servidor MCP. |
 | PostgreSQL | Base de datos Sakila. |
 | psycopg | Driver y `ConnectionPool` para PostgreSQL. |
@@ -61,105 +134,152 @@ proceso por `stdio`; este repositorio no implementa SSE ni Streamable HTTP.
 
 ### Requisitos
 
-- Python compatible con la sintaxis usada por el código (3.10 o superior).
-- PostgreSQL con una base llamada `sakila`.
-- Un cliente compatible con MCP que pueda iniciar procesos Python.
+- Docker Desktop instalado y abierto.
+- Un cliente compatible con MCP y transporte `stdio`.
+- Docker Compose, que permite definir y ejecutar PostgreSQL y los servidores
+  como servicios de contenedores con una configuración común. En Docker Desktop
+  se usa mediante `docker compose`.
 
-### Crear el entorno e instalar dependencias
+El servidor Sakila consulta la base PostgreSQL `sakila` y ofrece herramientas
+de consulta de solo lectura, además de recursos y prompts. El
+servidor Studio Ghibli consulta la API pública de películas: permite buscar y
+filtrar el catálogo, y obtener los detalles de las películas.
 
-En PowerShell:
+Para ejecutar los servidores directamente con Python, de forma opcional,
+instale las dependencias desde la raíz del proyecto:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install fastmcp httpx "psycopg[binary,pool]" python-dotenv
+python -m pip install -r .\servidor_sakila\requirements.txt
+python -m pip install -r .\servidor_ghibli\requirements.txt
 ```
 
-Si PowerShell bloquea la activación para la sesión actual:
+La ejecución directa del servidor Sakila también requiere una base accesible y las variables de
+conexión correspondientes.
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-```
-
-### Cargar Sakila
-
-Cree la base `sakila` en la instancia local de PostgreSQL que escucha en el
-puerto `5434` y ejecute los archivos SQL en orden. Por ejemplo, con `psql` y
-un rol administrador:
-
-```powershell
-createdb -U postgres -p 5434 sakila
-psql -U postgres -p 5434 -d sakila -f .\sakila\postgres-sakila-schema.sql
-psql -U postgres -p 5434 -d sakila -f .\sakila\postgres-sakila-insert-data.sql
-```
-
-El esquema SQL crea los objetos requeridos; no hay un paso separado de creación
-de vistas requerido por los servidores. Los scripts contienen sentencias de
-propiedad y permisos de PostgreSQL, por lo que la carga puede requerir un rol
-con privilegios administrativos. Adapte el comando si su instalación o sus
-credenciales son distintas.
-
-Para volver a generar los Markdown a partir de los PDF, de forma opcional,
+Para regenerar opcionalmente los Markdown de políticas a partir de sus PDF,
 instale MarkItDown y ejecute el conversor:
 
 ```powershell
 python -m pip install markitdown
-python .\politicas\convert_pdfs_to_md_llm.py .\politicas
+python .\servidor_sakila\politicas\convert_pdfs_to_md_llm.py .\servidor_sakila\politicas
 ```
 
-El conversor busca PDF directamente en el directorio indicado y guarda los
-Markdown en `md_llm/`. Esta dependencia no es necesaria para ejecutar los
-servidores MCP si los Markdown existentes son suficientes.
+Esta dependencia no es necesaria para ejecutar los servidores si los Markdown
+existentes son suficientes.
 
 ### Variables de entorno
 
-Cree `.env` en la raíz del proyecto:
+| Variable | Uso |
+|---|---|
+| `POSTGRES_USER` | Usuario superusuario creado por la imagen de PostgreSQL; en el ejemplo es `postgres`. |
+| `POSTGRES_PASSWORD` | Contraseña de ese superusuario. |
+| `DB_USER` | Nombre del rol de solo lectura que se crea para Sakila; en el ejemplo es `sakila_mcp_readonly`. |
+| `DB_PASSWORD` | Contraseña del rol de solo lectura. |
 
-```env
-DB_PASSWORD=REEMPLAZAR_POR_UNA_CONTRASENA_SEGURA
-DB_USER=sakila_mcp_readonly
+El servicio `postgres` usa `POSTGRES_USER` y `POSTGRES_PASSWORD` para la
+inicialización de PostgreSQL. El script `03-usuario-mcp.sh` crea `DB_USER` con
+`DB_PASSWORD` y le concede permisos de lectura. El servicio `sakila_server`
+recibe esas credenciales de solo lectura como `POSTGRES_USER` y
+`POSTGRES_PASSWORD`; dentro de Compose, se conecta a `postgres:5432`. El
+healthcheck y el comando de verificación del Compose usan el nombre `postgres`,
+que es el valor de `POSTGRES_USER` del archivo de ejemplo.
+Dentro del contenedor `sakila_server`, `POSTGRES_USER` y `POSTGRES_PASSWORD`
+son las credenciales de solo lectura (`DB_USER` y `DB_PASSWORD`), no las del
+superusuario: el código del servidor lee esos nombres de variables.
+
+### Carga de la base
+
+Al inicializar un volumen de datos vacío, PostgreSQL ejecuta los archivos de
+`servidor_sakila/sakila` en orden alfabético: `01-postgres-sakila-schema.sql`
+crea el esquema, `02-postgres-sakila-insert-data.sql` carga los datos y
+`03-usuario-mcp.sh` crea el usuario de solo lectura. Los scripts de
+`/docker-entrypoint-initdb.d` solo se ejecutan cuando el directorio de datos
+está vacío.
+
+También puede conectarse a PostgreSQL desde pgAdmin con host `localhost`,
+puerto `5433`, usuario `postgres` y la contraseña definida en
+`POSTGRES_PASSWORD`.
+
+### Configuración del cliente MCP (`stdio`)
+
+Los formatos y las ubicaciones varían según el cliente. El archivo
+[mcp-config.json](./mcp-config.json) contiene la configuración de ejemplo para
+clientes que usan `mcpServers`. En VS Code, la configuración equivalente va
+en `.vscode/mcp.json` y usa la propiedad `servers`:
+
+```json
+{
+  "servers": {
+    "sakila": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "compose", "-f", "RUTA/AL/PROYECTO/docker-compose.yml",
+        "run", "--rm", "-T", "sakila_server"
+      ]
+    },
+    "ghibli": {
+      "type": "stdio",
+      "command": "docker",
+      "args": [
+        "compose", "-f", "RUTA/AL/PROYECTO/docker-compose.yml",
+        "run", "--rm", "-T", "ghibli_server"
+      ]
+    }
+  }
+}
 ```
 
-| Variable | Obligatoria | Valor usado |
-|---|---:|---|
-| `DB_PASSWORD` | Sí | No tiene valor predeterminado. El servidor falla al iniciar si falta. |
-| `DB_USER` | No | `sakila_mcp_readonly` si no se define. |
+Tras cambiar código Python, ejecute `docker compose build` de nuevo antes de
+reiniciar el cliente para que use las imágenes actualizadas.
 
-El servidor Sakila se conecta a `localhost`, base `sakila` y puerto `5434`.
-Estos valores están fijados en `servidor_mcp_sakila.py` y no se configuran por
-variables de entorno.
+### Comandos útiles
 
-El código no crea usuarios ni permisos de PostgreSQL. Configure externamente
-un usuario con los permisos necesarios y evite usar `postgres`. Tenga en cuenta
-que el script de esquema incluido contiene `GRANT ALL ON SCHEMA public TO
-PUBLIC`; por lo tanto, no debe interpretarse como una configuración de mínimo
-privilegio lista para producción.
+```sh
+docker compose ps
+docker compose logs -f
+docker compose down
+docker compose down -v
+```
+
+`docker compose down -v` también elimina el volumen `mcp_pg_data` y, con él,
+los datos guardados de PostgreSQL.
+
+### Solución de problemas
+
+| Problema | Solución |
+|---|---|
+| `role "sakila_mcp_readonly" does not exist` o las tablas aparecen vacías | La base no terminó de inicializarse o el volumen quedó a medias. Los scripts solo se ejecutan cuando el volumen está vacío. Ejecute `docker compose down -v`, luego `docker compose up -d postgres` y espere a que termine la inicialización. Esto elimina los datos guardados. Si el error persiste, compruebe que `DB_USER` y `DB_PASSWORD` en `.env` sean los esperados. |
+| `port is already allocated (5433)` | En `docker-compose.yml`, cambie el primer número de `"5433:5432"` por un puerto libre; deje `5432` como segundo número. |
+| `Cannot connect to the Docker daemon` | Abra Docker Desktop y espere a que termine de iniciar. |
+| `connection refused` al conectar con PostgreSQL | Desde el equipo host use `localhost:5433`; desde un contenedor, el host es `postgres` y el puerto `5432`. Compruebe que PostgreSQL esté listo con `docker compose logs postgres`. |
+| El cliente agota el tiempo de espera al iniciar el servidor | Ejecute `docker compose build` antes de iniciar el cliente y confirme que la construcción termine correctamente. Hay que volver a hacer build después de cambiar código Python. |
+| Error de protocolo MCP | No escriba mensajes de depuración con `print()` en `stdout`, porque está reservado para el protocolo MCP. Envíe los mensajes de diagnóstico a `stderr`. |
 
 ## 5. Ejecución
 
 Servidor Sakila:
 
 ```powershell
-python servidor_mcp_sakila.py
+python .\servidor_sakila\servidor_mcp_sakila.py
 ```
 
 Servidor Studio Ghibli:
 
 ```powershell
-python servidor_mcp_ghibli_api.py
+python .\servidor_ghibli\servidor_mcp_ghibli_api.py
 ```
 
 También puede usar directamente el intérprete del entorno virtual:
 
 ```powershell
-.\.venv\Scripts\python.exe .\servidor_mcp_sakila.py
-.\.venv\Scripts\python.exe .\servidor_mcp_ghibli_api.py
+.\.venv\Scripts\python.exe .\servidor_sakila\servidor_mcp_sakila.py
+.\.venv\Scripts\python.exe .\servidor_ghibli\servidor_mcp_ghibli_api.py
 ```
 
-Después de modificar un servidor, reinicie el proceso iniciado por el cliente
-MCP.
+
 
 ## 6. Tools de Sakila
 
@@ -217,8 +337,9 @@ El servidor registra cinco recursos Markdown con MIME type `text/markdown`:
 | `politicas://03_actores_reconocidos.md` | Clasificación de actores por popularidad. |
 | `politicas://04_descuentos.md` | Descuentos según el segmento de gasto. |
 
-Los recursos entregan las reglas documentadas en `politicas/md_llm/`; por sí
-mismos no consultan la base ni calculan resultados actuales.
+Los recursos entregan las reglas documentadas en
+`servidor_sakila/politicas/md_llm/`; por sí mismos no consultan la base ni
+calculan resultados actuales.
 
 ### Políticas de negocio
 
@@ -352,13 +473,12 @@ errores de conexión y otros errores HTTP se transforman en errores controlados.
 
 - La validación SQL es una defensa adicional; no sustituye los permisos de
   PostgreSQL.
-- El usuario de PostgreSQL debe configurarse fuera del código y tener solo los
-  permisos requeridos.
-- Las credenciales solo se leen desde `DB_PASSWORD` y `DB_USER`; no las incluya
-  en el código ni en el control de versiones.
+- El servidor Sakila usa las credenciales de solo lectura configuradas en
+  `DB_USER` y `DB_PASSWORD` por Docker Compose; no incluya credenciales en el
+  código ni en el control de versiones.
 - Sakila no limita automáticamente el número de filas devueltas.
 - Ghibli usa un timeout HTTP de 10 segundos por solicitud.
 - La caché de Ghibli vive en memoria del proceso; se comparte entre sus
   solicitudes y se pierde cuando se reinicia el servidor.
 - Los PDF de políticas y los archivos Sakila son material incluido en el
-  repositorio; el proyecto no instala ni inicia PostgreSQL automáticamente.
+  repositorio. 

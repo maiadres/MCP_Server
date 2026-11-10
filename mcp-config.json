@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "ghibli": {
+      "command": "docker",
+      "args": [
+        "compose","-f","RUTA/AL/PROYECTO/docker-compose.yml","run","--rm","-T","ghibli_server"
+      ]
+    },
+    "sakila": {
+      "command": "docker",
+      "args": [
+        "compose","-f","RUTA/AL/PROYECTO/docker-compose.yml","run","--rm","-T","sakila_server"
+      ]
+    }
+  }
+}
