@@ -11,6 +11,81 @@ Protocol (MCP)**:
 
 Ambos servidores registran sus primitivas con FastMCP.
 
+## Inicio rápido
+
+1. Instala Docker Desktop para Windows o Mac, ábrelo y comprueba que Docker
+   Compose esté disponible:
+
+   ```sh
+   docker --version
+   docker compose version
+   ```
+
+2. Clona el repositorio y entra en su carpeta. Si necesitas una rama distinta
+   de la predeterminada, usa el comando alternativo:
+
+   ```sh
+   git clone https://github.com/maiadres/MCP_Server.git
+   # Alternativa: git clone -b <rama> https://github.com/maiadres/MCP_Server.git
+   cd MCP_Server
+   ```
+
+3. Crea el archivo `.env` desde el ejemplo. Inventa las dos contraseñas y
+   reemplaza los valores de ejemplo; ninguna variable puede quedar vacía:
+
+   ```text
+   Windows: copy .env.example .env
+   Mac/Linux: cp .env.example .env
+   ```
+
+4. Construye las imágenes de los servidores:
+
+   ```sh
+   docker compose build
+   ```
+
+5. Inicia PostgreSQL. La primera carga de la base tarda uno o dos minutos.
+   Sigue los registros y espera al segundo mensaje `ready to accept
+   connections`; el primero aparece antes de que terminen los scripts de
+   inicialización:
+
+   ```sh
+   docker compose up -d postgres
+   docker compose logs -f postgres
+   ```
+
+6. Comprueba que se haya creado el rol de solo lectura y que Sakila tenga sus
+   datos. El resultado debe ser `200`:
+
+   ```sh
+   docker compose exec postgres psql -U sakila_mcp_readonly -d sakila -c "SELECT count(*) FROM actor;"
+   ```
+
+7. Prueba los servidores por separado. Quedarán esperando la comunicación MCP;
+   sal de cada proceso con `Ctrl+C`:
+
+   ```sh
+   docker compose run --rm -T sakila_server
+   docker compose run --rm -T ghibli_server
+   ```
+
+8. Abre [mcp-config.json](./mcp-config.json), reemplaza `RUTA/AL/PROYECTO` en
+   la configuración por la ruta real del proyecto y luego reinicia por
+   completo tu cliente MCP. En Windows usa `/` como separador; en Mac/Linux,
+   ejecuta `pwd` dentro de la carpeta del proyecto y copia su resultado:
+
+   ```text
+   Windows: C:/ruta/real/al/proyecto
+   Mac/Linux: (resultado de pwd dentro de la carpeta del proyecto)
+   ```
+
+9. Pídele al cliente MCP que responda estas dos preguntas:
+
+   ```text
+   "Lista 5 películas de Ghibli"
+   "Dame 5 actores de Sakila"
+   ```
+
 ## 2. Estructura del proyecto
 
 ```text
@@ -65,13 +140,6 @@ proceso por `stdio`; este repositorio no implementa SSE ni Streamable HTTP.
   como servicios de contenedores con una configuración común. En Docker Desktop
   se usa mediante `docker compose`.
 
-Compruebe que Docker y Compose estén disponibles:
-
-```sh
-docker --version
-docker compose version
-```
-
 El servidor Sakila consulta la base PostgreSQL `sakila` y ofrece herramientas
 de consulta de solo lectura, además de recursos y prompts. El
 servidor Studio Ghibli consulta la API pública de películas: permite buscar y
@@ -103,13 +171,6 @@ existentes son suficientes.
 
 ### Variables de entorno
 
-```env
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=CAMBIAR_POR_UNA_CONTRASENA_SEGURA
-DB_USER=sakila_mcp_readonly
-DB_PASSWORD=contrasena
-```
-
 | Variable | Uso |
 |---|---|
 | `POSTGRES_USER` | Usuario superusuario creado por la imagen de PostgreSQL; en el ejemplo es `postgres`. |
@@ -137,84 +198,16 @@ crea el esquema, `02-postgres-sakila-insert-data.sql` carga los datos y
 `/docker-entrypoint-initdb.d` solo se ejecutan cuando el directorio de datos
 está vacío.
 
-### Puesta en marcha
+También puede conectarse a PostgreSQL desde pgAdmin con host `localhost`,
+puerto `5433`, usuario `postgres` y la contraseña definida en
+`POSTGRES_PASSWORD`.
 
-1. Copie el archivo de ejemplo a `.env` desde la raíz del proyecto y cambie
-   ambas contraseñas de ejemplo:
-
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-
-   En macOS o Linux:
-
-   ```sh
-   cp .env.example .env
-   ```
-
-2. Construya las imágenes:
-
-   ```sh
-   docker compose build
-   ```
-
-3. Inicie PostgreSQL:
-
-   ```sh
-   docker compose up -d postgres
-   ```
-
-4. Compruebe los registros y las tablas:
-
-   ```sh
-   docker compose logs postgres
-   docker compose exec postgres psql -U postgres -d sakila -c "\dt"
-   ```
-
-   También puede conectarse a PostgreSQL desde pgAdmin con host `localhost`,
-   puerto `5433`, usuario `postgres` y la contraseña definida en
-   `POSTGRES_PASSWORD`.
-
-5. Pruebe cada servidor MCP con `docker compose run --rm -T <servicio>`:
-
-   ```sh
-   docker compose run --rm -T sakila_server
-   docker compose run --rm -T ghibli_server
-   ```
-
-   El proceso usa `stdio`;
-   
 ### Configuración del cliente MCP (`stdio`)
 
-Agregue la configuración al archivo MCP que use el cliente; el formato y la
-ubicación varían según el cliente. Por ejemplo, VS Code usa `.vscode/mcp.json`
-con la propiedad `servers`, mientras que clientes que admiten `mcpServers`
-usan esa propiedad en su configuración. Reemplace `RUTA/AL/PROYECTO` por la
-ruta absoluta del proyecto. Para un cliente con formato `mcpServers`:
-
-```json
-{
-  "mcpServers": {
-    "sakila": {
-      "command": "docker",
-      "args": [
-        "compose", "-f", "RUTA/AL/PROYECTO/docker-compose.yml",
-        "run", "--rm", "-T", "sakila_server"
-      ]
-    },
-    "ghibli": {
-      "command": "docker",
-      "args": [
-        "compose", "-f", "RUTA/AL/PROYECTO/docker-compose.yml",
-        "run", "--rm", "-T", "ghibli_server"
-      ]
-    }
-  }
-}
-```
-
-En VS Code, el mismo comando se configura en `.vscode/mcp.json` con este
-formato:
+Los formatos y las ubicaciones varían según el cliente. El archivo
+[mcp-config.json](./mcp-config.json) contiene la configuración de ejemplo para
+clientes que usan `mcpServers`. En VS Code, la configuración equivalente va
+en `.vscode/mcp.json` y usa la propiedad `servers`:
 
 ```json
 {
@@ -239,7 +232,6 @@ formato:
 }
 ```
 
-Guarde el archivo y reinicie el cliente MCP para que cargue la configuración.
 Tras cambiar código Python, ejecute `docker compose build` de nuevo antes de
 reiniciar el cliente para que use las imágenes actualizadas.
 
@@ -259,9 +251,10 @@ los datos guardados de PostgreSQL.
 
 | Problema | Solución |
 |---|---|
+| `role "sakila_mcp_readonly" does not exist` o las tablas aparecen vacías | La base no terminó de inicializarse o el volumen quedó a medias. Los scripts solo se ejecutan cuando el volumen está vacío. Ejecute `docker compose down -v`, luego `docker compose up -d postgres` y espere a que termine la inicialización. Esto elimina los datos guardados. Si el error persiste, compruebe que `DB_USER` y `DB_PASSWORD` en `.env` sean los esperados. |
+| `port is already allocated (5433)` | En `docker-compose.yml`, cambie el primer número de `"5433:5432"` por un puerto libre; deje `5432` como segundo número. |
+| `Cannot connect to the Docker daemon` | Abra Docker Desktop y espere a que termine de iniciar. |
 | `connection refused` al conectar con PostgreSQL | Desde el equipo host use `localhost:5433`; desde un contenedor, el host es `postgres` y el puerto `5432`. Compruebe que PostgreSQL esté listo con `docker compose logs postgres`. |
-| `role does not exist` | Compruebe que `DB_USER` y `DB_PASSWORD` coincidan con el rol esperado. Los scripts de inicialización solo crean el rol al inicializar un volumen vacío; para volver a ejecutarlos, `docker compose down -v` elimina los datos y después `docker compose up -d postgres` crea un volumen nuevo. |
-| Las tablas aparecen vacías | Los SQL solo se ejecutan cuando el volumen está vacío. Para volver a cargarlos, ejecute `docker compose down -v` y luego `docker compose up -d postgres`. Esto borra permanentemente los datos guardados. |
 | El cliente agota el tiempo de espera al iniciar el servidor | Ejecute `docker compose build` antes de iniciar el cliente y confirme que la construcción termine correctamente. Hay que volver a hacer build después de cambiar código Python. |
 | Error de protocolo MCP | No escriba mensajes de depuración con `print()` en `stdout`, porque está reservado para el protocolo MCP. Envíe los mensajes de diagnóstico a `stderr`. |
 
@@ -286,11 +279,7 @@ También puede usar directamente el intérprete del entorno virtual:
 .\.venv\Scripts\python.exe .\servidor_ghibli\servidor_mcp_ghibli_api.py
 ```
 
-La ejecución directa requiere las dependencias de los respectivos archivos
-`requirements.txt` y una base Sakila accesible con las credenciales de entorno
-esperadas por el servidor. Para Docker Compose, siga la puesta en marcha
-anterior. Al ejecutar directamente, reinicie el proceso tras cambiar el código;
-con Docker Compose, vuelva a hacer build y reinicie el cliente MCP.
+
 
 ## 6. Tools de Sakila
 
